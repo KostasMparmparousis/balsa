@@ -228,7 +228,10 @@ class Timer(object):
         self.stage_timing_dict = collections.defaultdict(list)
 
     def Start(self, stage):
-        assert self.curr_stage is None, 'Forgot to call Stop()?'
+        # --> Commented out, since it interferes with connections
+        # stopping in PlanAndExecute calls with retries
+        #
+        # assert self.curr_stage is None, 'Forgot to call Stop()?'
         self.curr_stage_start = time.time()
         self.curr_stage = stage
 

@@ -50,7 +50,7 @@ def _GetJoinConds(sql):
 
 
 def _GetGraph(join_conds):
-    g = nx.Graph()
+    g = nx.MultiGraph()
     for t1, c1, t2, c2 in join_conds:
         g.add_edge(t1, t2, join_keys={t1: c1, t2: c2})
     return g

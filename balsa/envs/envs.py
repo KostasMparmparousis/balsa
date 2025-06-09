@@ -45,10 +45,16 @@ class Workload(object):
     def Params(cls):
         p = hyperparams.InstantiableParams(cls)
         p.Define('query_dir', None, 'Directory to workload queries.')
+        p.Define('test_query_dir', None,
+                 'Directory to workload test queries. If None, use query_dir.')
         p.Define(
             'query_glob', '*.sql',
             'If supplied, glob for this pattern.  Otherwise, use all queries.'\
             '  Example: 29*.sql.'
+        )
+        p.Define(
+            'workload_order_file', None,
+            'Text file specifying the order of queries for training.'
         )
         p.Define(
             'loop_through_queries', False,
@@ -63,7 +69,7 @@ class Workload(object):
                  ['Hash Join', 'Merge Join', 'Nested Loop'],
                  'Join operators to learn.')
         p.Define('search_space_scan_ops',
-                 ['Index Scan', 'Index Only Scan', 'Seq Scan'],
+                 ['Index Scan', 'Index Only Scan', 'Seq Scan', 'Bitmap Heap Scan', 'Tid Scan'],
                  'Scan operators to learn.')
         return p
 
@@ -94,7 +100,7 @@ class Workload(object):
             if type(query_glob) is str:
                 globs = [query_glob]
             sql_files = np.concatenate([
-                glob.glob('{}/{}'.format(query_dir, pattern))
+                glob.glob('{}/**/{}'.format(query_dir, pattern), recursive=True)
                 for pattern in globs
             ]).ravel()
         sql_files = set(sql_files)
@@ -177,18 +183,127 @@ class JoinOrderBenchmark(Workload):
         """Loads all queries into balsa.Node objects."""
         p = self.params
         all_sql_set = self._get_sql_set(p.query_dir, p.query_glob)
-        test_sql_set = self._get_sql_set(p.query_dir, p.test_query_glob)
-        assert test_sql_set.issubset(all_sql_set)
-        # sorted by query id for easy debugging
-        all_sql_list = sorted(all_sql_set)
+        if p.test_query_dir is not None:
+            test_sql_set = self._get_sql_set(p.test_query_dir, p.query_glob)
+        else:
+            test_sql_set = self._get_sql_set(p.query_dir, p.test_query_glob)
+            assert test_sql_set.issubset(all_sql_set)
+
+        # If workload order file is specified, use that order
+        if p.workload_order_file and os.path.isfile(p.workload_order_file):
+            with open(p.workload_order_file, 'r') as f:
+                # Read lines and remove whitespace/empty lines
+                ordered_files = [line.strip() for line in f if line.strip()]
+            
+            # Create full paths for ordered files (these will be training queries)
+            train_sql_list = []
+            for filename in ordered_files:
+                full_path = os.path.join(p.query_dir, filename)
+                if full_path in all_sql_set:
+                    train_sql_list.append(full_path)
+                else:
+                    print(f"Warning: Query file {filename} from order file not found in query_dir")
+            
+            # All remaining queries are test queries
+            remaining_queries = sorted(all_sql_set - set(train_sql_list))
+            print(f"Adding {len(remaining_queries)} remaining queries as test nodes")
+            
+            # Combine train and test queries (train first, then test)
+            all_sql_list = train_sql_list + remaining_queries
+        else:
+            # Default behavior: sorted by query id for easy debugging
+            all_sql_list = sorted(all_sql_set)
+
         all_nodes = [ParseSqlToNode(sqlfile) for sqlfile in all_sql_list]
 
-        train_nodes = [
-            n for n in all_nodes
-            if p.test_query_glob is None or n.info['path'] not in test_sql_set
-        ]
-        test_nodes = [n for n in all_nodes if n.info['path'] in test_sql_set]
+        # In ordered mode, train nodes are exactly those from the order file
+        if p.workload_order_file and os.path.isfile(p.workload_order_file):
+            train_nodes = [n for n in all_nodes if n.info['path'] in set(train_sql_list)]
+            test_nodes = [n for n in all_nodes if n.info['path'] in set(remaining_queries)]
+        elif p.test_query_dir is not None:
+            train_nodes = [n for n in all_nodes if n.info['path'] in set(all_sql_list)]
+            test_sql_list = sorted(test_sql_set)
+            test_nodes = [ParseSqlToNode(sqlfile) for sqlfile in test_sql_list]
+        else:
+            # Default behavior
+            train_nodes = [
+                n for n in all_nodes
+                if p.test_query_glob is None or n.info['path'] not in test_sql_set
+            ]
+            test_nodes = [n for n in all_nodes if n.info['path'] in test_sql_set]
+        
         assert len(train_nodes) > 0
+        print(f"Loaded {len(train_nodes)} training queries and {len(test_nodes)} test queries")
+        return all_nodes, train_nodes, test_nodes
+
+# Manually added for the STACK database/workload
+class STACK(Workload):
+
+    @classmethod
+    def Params(cls):
+        p = super().Params()
+        # Needs to be an absolute path for rllib.
+        module_dir = os.path.abspath(os.path.dirname(balsa.__file__) + '/../')
+        p.query_dir = os.path.join(module_dir, 'queries/stack')
+        return p
+
+    def __init__(self, params):
+        super().__init__(params)
+        p = params
+        self.query_nodes, self.train_nodes, self.test_nodes = \
+            self._LoadQueries()
+        self.workload_info = plans_lib.WorkloadInfo(self.query_nodes)
+        self.workload_info.SetPhysicalOps(p.search_space_join_ops,
+                                          p.search_space_scan_ops)
+
+    def _LoadQueries(self):
+        """Loads all queries into balsa.Node objects."""
+        p = self.params
+        all_sql_set = self._get_sql_set(p.query_dir, p.query_glob)
+        test_sql_set = self._get_sql_set(p.query_dir, p.test_query_glob)
+        assert test_sql_set.issubset(all_sql_set)
+
+        # If workload order file is specified, use that order
+        if p.workload_order_file and os.path.isfile(p.workload_order_file):
+            with open(p.workload_order_file, 'r') as f:
+                # Read lines and remove whitespace/empty lines
+                ordered_files = [line.strip() for line in f if line.strip()]
+            
+            # Create full paths for ordered files (these will be training queries)
+            train_sql_list = []
+            for filename in ordered_files:
+                full_path = os.path.join(p.query_dir, filename)
+                if full_path in all_sql_set:
+                    train_sql_list.append(full_path)
+                else:
+                    print(f"Warning: Query file {filename} from order file not found in query_dir")
+            
+            # All remaining queries are test queries
+            remaining_queries = sorted(all_sql_set - set(train_sql_list))
+            print(f"Adding {len(remaining_queries)} remaining queries as test nodes")
+            
+            # Combine train and test queries (train first, then test)
+            all_sql_list = train_sql_list + remaining_queries
+        else:
+            # Default behavior: sorted by query id for easy debugging
+            all_sql_list = sorted(all_sql_set)
+
+        all_nodes = [ParseSqlToNode(sqlfile) for sqlfile in all_sql_list]
+
+        # In ordered mode, train nodes are exactly those from the order file
+        if p.workload_order_file and os.path.isfile(p.workload_order_file):
+            train_nodes = [n for n in all_nodes if n.info['path'] in set(train_sql_list)]
+            test_nodes = [n for n in all_nodes if n.info['path'] in set(remaining_queries)]
+        else:
+            # Default behavior
+            train_nodes = [
+                n for n in all_nodes
+                if p.test_query_glob is None or n.info['path'] not in test_sql_set
+            ]
+            test_nodes = [n for n in all_nodes if n.info['path'] in test_sql_set]
+        
+        assert len(train_nodes) > 0
+        print(f"Loaded {len(train_nodes)} training queries and {len(test_nodes)} test queries")
 
         return all_nodes, train_nodes, test_nodes
 

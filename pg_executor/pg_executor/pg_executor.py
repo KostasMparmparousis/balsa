@@ -15,6 +15,9 @@ import collections
 import contextlib
 from select import select
 import socket
+# lehl@2022-10-19: Additional libraries to perform query logging
+import os
+import time
 
 import psycopg2
 import psycopg2.extensions
@@ -26,12 +29,19 @@ import ray
 
 # JOB/IMDB.
 # LOCAL_DSN = "postgres://psycopg:psycopg@localhost/imdb"
-LOCAL_DSN = "host=/tmp dbname=imdbload"
-REMOTE_DSN = "postgres://psycopg:psycopg@localhost/imdbload"
+LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/imdbload"
+REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/imdbload"
 
 # TPC-H.
-# LOCAL_DSN = "postgres://psycopg:psycopg@localhost/tpch-sf10"
-# REMOTE_DSN = "postgres://psycopg:psycopg@localhost/tpch-sf10"
+# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/tpch"
+# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/tpch"
+
+# TPC-DS
+#LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/tpcds"
+#REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/tpcds"
+
+QUERY_LOG_FILE = 'query_log_file.txt'
+NUM_EXECUTIONS = 3
 
 # A simple class holding an execution result.
 #   result: a list, outputs from cursor.fetchall().  E.g., the textual outputs
@@ -72,14 +82,24 @@ def wait_select_inter(conn):
             continue
 
 
-psycopg2.extensions.set_wait_callback(wait_select_inter)
+# COMMENTED OUT -> Likely causing errors for queries where the database state breaks,
+# disabling as it is not necessary for single-machine/-threaded experiments
+#
+# psycopg2.extensions.set_wait_callback(wait_select_inter)
 
 
 @contextlib.contextmanager
 def Cursor(dsn=LOCAL_DSN):
     """Get a cursor to local Postgres database."""
     # TODO: create the cursor once per worker node.
-    conn = psycopg2.connect(dsn)
+    def get_connection(dsn):
+        try:
+            return psycopg2.connect(dsn)
+        except psycopg2.OperationalError:
+            time.sleep(10)
+            return get_connection(dsn)
+
+    conn = get_connection(dsn)
     conn.set_session(autocommit=True)
     try:
         with conn.cursor() as cursor:
@@ -103,17 +123,17 @@ def _SetGeneticOptimizer(flag, cursor):
     assert cursor.statusmessage == 'SET'
 
 
-def ExecuteRemote(sql, verbose=False, geqo_off=False, timeout_ms=None):
-    return _ExecuteRemoteImpl.remote(sql, verbose, geqo_off, timeout_ms)
+def ExecuteRemote(sql, verbose=False, geqo_off=False, timeout_ms=None, file_prefix=''):
+    return _ExecuteRemoteImpl.remote(sql, verbose, geqo_off, timeout_ms, file_prefix=file_prefix)
 
 
 @ray.remote(resources={'pg': 1})
-def _ExecuteRemoteImpl(sql, verbose, geqo_off, timeout_ms):
+def _ExecuteRemoteImpl(sql, verbose, geqo_off, timeout_ms, file_prefix=''):
     with Cursor(dsn=REMOTE_DSN) as cursor:
-        return Execute(sql, verbose, geqo_off, timeout_ms, cursor)
+        return Execute(sql, verbose, geqo_off, timeout_ms, cursor, file_prefix=file_prefix)
 
 
-def Execute(sql, verbose=False, geqo_off=False, timeout_ms=None, cursor=None):
+def Execute(sql, verbose=False, geqo_off=False, timeout_ms=None, cursor=None, file_prefix=''):
     """Executes a sql statement.
 
     Returns:
@@ -126,9 +146,16 @@ def Execute(sql, verbose=False, geqo_off=False, timeout_ms=None, cursor=None):
     if timeout_ms is not None:
         cursor.execute('SET statement_timeout to {}'.format(int(timeout_ms)))
     else:
-        # Passing None / setting to 0 means disabling timeout.
-        cursor.execute('SET statement_timeout to 0')
+        # Specifically setting a higher than default timeout so that
+        # Neo does not time out for very long running STACK queries
+        #
+        if LOCAL_DSN.endswith('so'):
+            cursor.execute(f'SET statement_timeout to {5 * 60 * 1000}')
+        else:
+            # Passing None / setting to 0 means disabling timeout.
+            cursor.execute('SET statement_timeout to 0')
     try:
+        # for iteration in range(NUM_EXECUTIONS):
         cursor.execute(sql)
         result = cursor.fetchall()
         has_timeout = False
@@ -147,18 +174,49 @@ def Execute(sql, verbose=False, geqo_off=False, timeout_ms=None, cursor=None):
             result = []
             has_timeout = True
         elif isinstance(e, psycopg2.OperationalError):
-            if 'SSL SYSCALL error: EOF detected' in str(e).strip():
-                # This usually indicates an expensive query, putting the server
-                # into recovery mode.  'cursor' may get closed too.
-                print('Treating as a timeout:', e)
-                result = []
-                has_timeout = True
-            else:
-                # E.g., psycopg2.OperationalError: FATAL: the database system
-                # is in recovery mode
-                raise e
+            # This usually indicates an expensive query, putting the server
+            # into recovery mode.  'cursor' may get closed too.
+            print('Treating as a timeout:', e)
+            result = []
+            has_timeout = True
+        
+            if 'the database system is in recovery mode' in str(e).strip():
+                time.sleep(10)
+
+            # COMMENTED OUT, since it leads unrecoverable errors in case the database
+            # goes down shortly because of an erroneous query
+            #
+            # if 'SSL SYSCALL error: EOF detected' in str(e).strip():
+            #     # This usually indicates an expensive query, putting the server
+            #     # into recovery mode.  'cursor' may get closed too.
+            #     print('Treating as a timeout:', e)
+            #     result = []
+            #     has_timeout = True
+            # else:
+            #     # E.g., psycopg2.OperationalError: FATAL: the database system
+            #     # is in recovery mode
+            #     raise e
         else:
             raise e
+    else:
+        # Add logging of executed queries
+        #
+        try:
+            latency = float(result[0][0][0]['Execution Time'])
+            planning_time = float(result[0][0][0]['Planning Time'])
+        except IndexError:
+            pass
+        except KeyError:
+            pass
+        else:
+            query_log_file_name = "_".join([file_prefix, QUERY_LOG_FILE])
+
+            with open(query_log_file_name, 'a') as qlf:
+                qlf.write(";".join([str(sql).replace('\n',' '), str(latency), str(planning_time), str(timeout_ms), str(geqo_off)]))
+                qlf.write(os.linesep)
+
+            print(f"Executed Query on Postgres taking {latency:.3f} ({planning_time:.3f} planning).")
+
     try:
         _SetGeneticOptimizer('default', cursor)
     except psycopg2.InterfaceError as e:

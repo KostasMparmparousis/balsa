@@ -144,7 +144,7 @@ class SimQueryFeaturizer(plans_lib.Featurizer):
 
         # Filtered tables.
         table_id_to_name = lambda table_id: table_id.split(' ')[0]  # Hack.
-
+        # print(node.info)
         for rel_id, est_rows in node.info['all_filters_est_rows'].items():
             if rel_id not in joined:
                 # Due to the way we copy Nodes and populate this info field,
@@ -155,14 +155,18 @@ class SimQueryFeaturizer(plans_lib.Featurizer):
             total_rows = self.workload_info.table_num_rows[table_id_to_name(
                 rel_id)]
 
-            # NOTE: without ANALYZE, for some reason this predicate is
-            # estimated to have 703 rows, whereas the table only has 4 rows:
-            #   (kind IS NOT NULL) AND ((kind)::text <> 'production
-            #   companies'::text)
-            # With ANALYZE run, this assert passes.
-            assert est_rows >= 0 and est_rows <= total_rows, (node.info,
-                                                              est_rows,
-                                                              total_rows)
+            # # NOTE: without ANALYZE, for some reason this predicate is
+            # # estimated to have 703 rows, whereas the table only has 4 rows:
+            # #   (kind IS NOT NULL) AND ((kind)::text <> 'production
+            # #   companies'::text)
+            # # With ANALYZE run, this assert passes.
+            # assert est_rows >= 0 and est_rows <= total_rows, (node.info,
+            #                                                   est_rows,
+            #                                                   total_rows)
+            # Assertion is triggered with STACK query, instead replaced by clamping
+            est_rows = max(0, est_rows)
+            est_rows = min(est_rows, total_rows)
+
             vec[idx] = est_rows / total_rows
         return vec
 
@@ -640,7 +644,10 @@ class Sim(object):
     def _SimulationDataPath(self):
         p = self.params
         hash_key = Sim.HashOfSimData(p)
-        return 'data/sim-data-{}.pkl'.format(hash_key)
+        if 'stack' in p.workload.query_dir:
+            return 'data/sim-data-STACK-{}.pkl'.format(hash_key)
+        else:
+            return 'data/sim-data-{}.pkl'.format(hash_key)
 
     def _LoadSimulationData(self):
         path = self._SimulationDataPath()
@@ -669,7 +676,10 @@ class Sim(object):
     def _FeaturizedDataPath(self):
         p = self.params
         hash_key = Sim.HashOfFeaturizedData(p)
-        return 'data/sim-featurized-{}.pkl'.format(hash_key)
+        if 'stack' in p.workload.query_dir:
+            return 'data/sim-featurized-STACK-{}.pkl'.format(hash_key)
+        else:
+            return 'data/sim-featurized-{}.pkl'.format(hash_key)
 
     def _LoadFeaturizedData(self):
         path = self._FeaturizedDataPath()

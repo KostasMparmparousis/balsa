@@ -191,8 +191,13 @@ class Experience(object):
         if self.workload_info is None:
             print('Creating WorkloadInfo')
             self.workload_info = plans_lib.WorkloadInfo(self.nodes)
-            self.workload_info.WithJoinGraph(
-                graphs.JOIN_ORDER_BENCHMARK_JOIN_GRAPH)
+            
+            # CHANGE GRAPH HERE TO CHANGE WORKLOAD
+            # ====================================
+            #
+            self.workload_info.WithJoinGraph(graphs.JOIN_ORDER_BENCHMARK_JOIN_GRAPH)
+            # self.workload_info.WithJoinGraph(graphs.STACK_JOIN_GRAPH)
+            
 
         rel_names, scan_types, join_types, all_ops = (
             self.workload_info.rel_names, self.workload_info.scan_types,

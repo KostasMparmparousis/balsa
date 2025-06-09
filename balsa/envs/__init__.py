@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .envs import JoinOrderBenchmark
+from .envs import JoinOrderBenchmark, STACK
 from .envs import RunningStats
 from .envs import Workload

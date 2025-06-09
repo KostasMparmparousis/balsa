@@ -62,6 +62,16 @@ class TreeConvolution(nn.Module):
             nn.Linear(32, label_size),
         )
         self.reset_weights()
+        self._register_embedding_hook()
+        self.final_plan_embedding = None
+
+    def _register_embedding_hook(self):
+        def hook(module, inputs):
+            # inputs[0] shape: [batch, 128]
+            self.final_embedding = inputs[0].detach().cpu().numpy()
+            
+        # Register on the LayerNorm in out_mlp
+        self.out_mlp[1].register_forward_pre_hook(hook)
 
     def reset_weights(self):
         for name, p in self.named_parameters():
@@ -98,6 +108,8 @@ class TreeConvolution(nn.Module):
         concat = torch.cat((query_embs, trees), axis=1)
 
         out = self.conv((concat, indexes))
+        conv_out = self.conv((concat, indexes))
+        self.final_plan_embedding = conv_out.detach().cpu().numpy()
         out = self.out_mlp(out)
         return out
 
@@ -192,6 +204,13 @@ def _make_preorder_ids_tree(curr, root_index=1):
     """
     if not curr.children:
         return (root_index, 0, 0), root_index
+    
+    # Under every Bitmap Heap Scan is a Bitmap Index Scan, these do not need to be
+    # considered seperately -> directly act as if the Bitmap Heap Scan was the leaf node
+    #
+    if curr.node_type == 'Bitmap Heap Scan':
+        return (root_index, 0, 0), root_index
+        
     lhs, lhs_max_id = _make_preorder_ids_tree(curr.children[0],
                                               root_index=root_index + 1)
     rhs, rhs_max_id = _make_preorder_ids_tree(curr.children[1],

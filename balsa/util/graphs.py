@@ -45,3 +45,16 @@ JOIN_ORDER_BENCHMARK_JOIN_GRAPH = {
     'keyword': ['movie_keyword'],
     'movie_info_idx': ['title', 'info_type'],
 }
+
+STACK_JOIN_GRAPH = {
+    'account': ['so_user'],
+    'answer': ['site', 'so_user', 'question'],
+    'badge': ['site', 'so_user'],
+    'comment': ['site'],
+    'post_link': ['site', 'question'],
+    'question': ['answer', 'post_link', 'tag_question', 'site', 'so_user'],
+    'site': ['site', 'answer', 'badge', 'comment', 'post_link', 'question', 'so_user', 'tag', 'tag_question'],
+    'so_user': ['account', 'answer', 'badge', 'question'],
+    'tag': ['site', 'tag_question'],
+    'tag_question': ['site', 'tag', 'question'],
+}

@@ -289,6 +289,8 @@ class Node(object):
             node_type = t.node_type.replace(' ', '')
             # PG uses the former & the extension expects the latter.
             node_type = node_type.replace('NestedLoop', 'NestLoop')
+            node_type = node_type.replace('BitmapHeapScan', 'BitmapScan')
+            node_type = node_type.replace('BitmapIndexScan', 'BitmapScan')
             if t.IsScan():
                 scans.append(node_type + '(' + t.table_alias + ')')
                 return [t.table_alias], t.table_alias
@@ -573,7 +575,10 @@ def GetAllSubtrees(nodes):
     def _fn(node, trees):
         trees.append(node)
         for c in node.children:
-            _fn(c, trees)
+            # Make sure Bitmap Index Scans are not added to the tree,
+            # as they always have a Bitmap Heap Scan parent node
+            if (node.node_type != 'Bitmap Heap Scan') or (c.node_type != 'Bitmap Index Scan'):
+                _fn(c, trees)
 
     if isinstance(nodes, Node):
         nodes = [nodes]
@@ -588,7 +593,9 @@ def GetAllSubtreesNoLeaves(nodes):
     trees = []
 
     def _fn(node, trees):
-        if len(node.children):
+        # We want to treat Bitmap Heap Scan as a Leaf node, but it
+        # generally has a single Bitmap Index Scan child node    
+        if len(node.children) and (node.node_type != 'Bitmap Heap Scan'):
             trees.append(node)
             for c in node.children:
                 _fn(c, trees)

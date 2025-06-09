@@ -18,7 +18,8 @@ import re
 import subprocess
 
 import pandas as pd
-
+from functools import lru_cache
+import datetime
 from balsa.util import plans_lib
 import pg_executor
 
@@ -55,14 +56,23 @@ def _SetGeneticOptimizer(flag, cursor):
 
 def DropBufferCache():
     # WARNING: no effect if PG is running on another machine
-    subprocess.check_output(['free', '&&', 'sync'])
-    subprocess.check_output(
-        ['sudo', 'sh', '-c', 'echo 3 > /proc/sys/vm/drop_caches'])
-    subprocess.check_output(['free'])
+    #subprocess.check_output(['free', '&&', 'sync'])
+    #subprocess.check_output(
+    #    ['sudo', 'sh', '-c', 'echo 3 > /proc/sys/vm/drop_caches'])
+    #subprocess.check_output(['free'])
 
     with pg_executor.Cursor() as cursor:
-        cursor.execute('DISCARD ALL;')
+        cursor.execute('DISCARD ALL;')        
 
+# def DropBufferCache():
+#     try:
+#         # Clear PostgreSQL's internal caches
+#         with pg_executor.Cursor() as cursor:
+#             # Discard all temporary data and caches
+#             cursor.execute('SELECT clear_cache();')
+#             print("PostgreSQL caches cleared successfully.")
+#     except Exception as e:
+#         print(f"Failed to clear PostgreSQL caches: {e}")        
 
 def ExplainAnalyzeSql(sql,
                       comment=None,
@@ -241,12 +251,16 @@ def _run_explain(explain_str,
     else:
         s = str(explain_str).rstrip() + '\n' + sql
 
+    file_prefix = pg_executor_timestamp()
     if remote:
         assert cursor is None
-        return pg_executor.ExecuteRemote(s, verbose, geqo_off, timeout_ms)
+        return pg_executor.ExecuteRemote(s, verbose, geqo_off, timeout_ms, file_prefix=file_prefix)
     else:
-        return pg_executor.Execute(s, verbose, geqo_off, timeout_ms, cursor)
+        return pg_executor.Execute(s, verbose, geqo_off, timeout_ms, cursor, file_prefix=file_prefix)
 
+@lru_cache()
+def pg_executor_timestamp():
+    return datetime.datetime.now().strftime('%Y_%m_%d__%H%M%S')
 
 def _FilterExprsByAlias(exprs, table_alias):
     # Look for <table_alias>.<stuff>.
@@ -257,7 +271,6 @@ def _FilterExprsByAlias(exprs, table_alias):
 def ParsePostgresPlanJson(json_dict):
     """Takes JSON dict, parses into a Node."""
     curr = json_dict['Plan']
-
     def _parse_pg(json_dict, select_exprs=None, indent=0):
         op = json_dict['Node Type']
         cost = json_dict['Total Cost']
@@ -292,9 +305,13 @@ def ParsePostgresPlanJson(json_dict):
 
         # Recurse.
         if 'Plans' in json_dict:
-            for n in json_dict['Plans']:
-                curr_node.children.append(
-                    _parse_pg(n, select_exprs=select_exprs, indent=indent + 2))
+            for next_plan in json_dict['Plans']:
+                # Treating Bitmap Heap Scans as the leaf node, since there is always just
+                # a single Bitmap Index Scan node below
+                if (curr_node.node_type != 'Bitmap Heap Scan') or (next_plan['Node Type'] != 'Bitmap Index Scan'):
+                    curr_node.children.append(
+                        _parse_pg(next_plan, select_exprs=select_exprs, indent=indent + 2))
+
 
         # Special case.
         if op == 'Bitmap Heap Scan':
@@ -325,7 +342,15 @@ def EstimateFilterRows(nodes):
                 if key not in cache:
                     sql = 'EXPLAIN(format json) SELECT * FROM {} WHERE {};'.format(
                         table_id, pred)
-                    cursor.execute(sql)
+                    
+                    try:
+                        cursor.execute(sql)
+                    except Exception as e:
+                        # This is done specifically since STACK queries are sometimes not parsed correctly
+                        # where a join condition is assumed to be a filter predicate, such as '(u1.site_id = a1.site_id)'
+                        sql = f'EXPLAIN(format json) SELECT * FROM {table_id}'
+                        cursor.execute(sql)
+                    
                     json_dict = cursor.fetchall()[0][0][0]
                     num_rows = json_dict['Plan']['Plan Rows']
                     cache[key] = num_rows
@@ -367,6 +392,17 @@ def GetAllTableNumRows(rel_names):
         'person_info': 2963664,
         'role_type': 12,
         'title': 2528312,
+
+        'account': 13863748,
+        'tag_question': 36883820,
+        'site': 173,
+        'question': 12631974,
+        'badge': 51232233,
+        'so_user': 21097404,
+        'tag': 186770,
+        'comment': 103557557,
+        'answer': 6343509,
+        'post_link': 2264333,
     }
 
     d = {}
