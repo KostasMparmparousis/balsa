@@ -1,17 +1,3 @@
-## Setup Environment
-1. Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) if not already installed.
-2. Create and activate the environment:
-   ```bash
-   conda env create -f environment.yml
-   conda activate balsa
-   ```
-3. Install the pg_executor module:
-   ```bash
-   pip install -e pg_executor
-   ```
-
----
-
 # Balsa
 
 <p>
