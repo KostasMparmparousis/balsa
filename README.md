@@ -10,6 +10,25 @@
    pip install -e pg_executor
    ```
 
+## Training Guide
+
+1. Choose from one of the classes found in `experiments.py`, to be given as input to the training script, from line 489 onwards (*e.g. Neo_JOBLeaveOneOutSplit1*):
+2. Run the training script:
+   ```bash
+   python3 run.py --run Neo_JOBLeaveOneOutSplit1 --local \ 
+   --workload_order /data/hdd1/users/kmparmp/experiment2/job/train/leave_one_out/queries/ascending_latency_query_order.txt \ 
+   --target_checkpoint_dir /data/hdd1/users/kmparmp/experiment2/job/train/leave_one_out/models/neo/asc_latency
+   ```
+
+## Testing guide
+
+Run the testing script:
+   ```bash
+  python3 test_model.py --run Neo_JOBRandomSplit1 \ 
+  --model_checkpoint /path/to/checkpoints/checkpoint__epoch44.pt  \ 
+  --workload_dir /path/to/workload/experiment2/job/test/random/ascending_latency/
+   ```
+
 ---
 
 # Balsa
