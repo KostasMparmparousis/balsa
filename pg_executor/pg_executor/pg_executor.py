@@ -23,6 +23,7 @@ import psycopg2
 import psycopg2.extensions
 from psycopg2.extensions import POLL_OK, POLL_READ, POLL_WRITE
 import ray
+import sqlalchemy
 
 # Change these strings so that psycopg2.connect(dsn=dsn_val) works correctly
 # for local & remote Postgres.
@@ -33,12 +34,40 @@ LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468
 REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/imdbload"
 
 # TPC-H.
-# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/tpch"
-# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/tpch"
+# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/tpch"
+# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/tpch"
 
 # TPC-DS
-#LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/tpcds"
-#REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/tpcds"
+# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/tpcds"
+# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/tpcds"
+
+# SSB
+# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/ssb"
+# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/ssb"
+
+# STACK 2011
+# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2011"
+# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2011"
+
+# STACK 2015
+# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2015"
+# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2015"
+
+# STACK 2019
+# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2019"
+# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2019"
+
+local_engine = sqlalchemy.create_engine(
+    LOCAL_DSN,
+    isolation_level="AUTOCOMMIT",
+    pool_pre_ping=True,
+)
+
+remote_engine = sqlalchemy.create_engine(
+    REMOTE_DSN,
+    isolation_level="AUTOCOMMIT",
+    pool_pre_ping=True,
+)
 
 QUERY_LOG_FILE = 'query_log_file.txt'
 NUM_EXECUTIONS = 3
@@ -87,26 +116,34 @@ def wait_select_inter(conn):
 #
 # psycopg2.extensions.set_wait_callback(wait_select_inter)
 
-
 @contextlib.contextmanager
 def Cursor(dsn=LOCAL_DSN):
-    """Get a cursor to local Postgres database."""
-    # TODO: create the cursor once per worker node.
-    def get_connection(dsn):
-        try:
-            return psycopg2.connect(dsn)
-        except psycopg2.OperationalError:
-            time.sleep(10)
-            return get_connection(dsn)
+    """
+    Get a cursor from a pooled SQLAlchemy connection.
 
-    conn = get_connection(dsn)
-    conn.set_session(autocommit=True)
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("load 'pg_hint_plan';")
-            yield cursor
-    finally:
-        conn.close()
+    This context manager checks out a connection from a pre-configured pool,
+    provides a DBAPI cursor, and ensures the connection is returned to the
+    pool when done.
+    """
+    # Select the appropriate engine based on the DSN.
+    engine = local_engine if dsn == LOCAL_DSN else remote_engine
+    
+    with engine.connect() as connection:
+        # Get the underlying psycopg2 connection object to maintain compatibility.
+        if hasattr(connection, 'raw_connection'):
+            raw_conn = connection.raw_connection()
+        else:
+            raw_conn = connection.connection
+        try:
+            with raw_conn.cursor() as cursor:
+                # Load pg_hint_plan for the session, same as the original implementation.
+                cursor.execute("load 'pg_hint_plan';")
+                yield cursor
+        finally:
+            # The 'with engine.connect() ...' block handles returning the
+            # connection to the pool automatically. The raw_conn does not
+            # need to be closed separately.
+            pass
 
 
 # ----------------------------------------

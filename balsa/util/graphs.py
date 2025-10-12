@@ -58,3 +58,102 @@ STACK_JOIN_GRAPH = {
     'tag': ['site', 'tag_question'],
     'tag_question': ['site', 'tag', 'question'],
 }
+
+TPC_H_JOIN_GRAPH = {
+    'customer': ['orders', 'nation'],
+    'lineitem': ['partsupp', 'orders'],
+    'nation': ['customer', 'region', 'supplier'],
+    'orders': ['customer', 'lineitem'],
+    'part': ['partsupp'],
+    'partsupp': ['part', 'supplier', 'lineitem'],
+    'region': ['nation'],
+    'supplier': ['nation', 'partsupp'],
+}
+
+TPC_DS_JOIN_GRAPH = {
+    'call_center': ['date_dim', 'catalog_returns', 'catalog_sales'],
+    'catalog_page': ['date_dim', 'promotion', 'catalog_returns', 'catalog_sales'],
+    'catalog_returns': [
+        'call_center', 'catalog_page', 'item', 'reason', 'customer_address',
+        'customer_demographics', 'customer', 'household_demographics', 'date_dim',
+        'time_dim', 'ship_mode', 'warehouse'
+    ],
+    'catalog_sales': [
+        'customer_address', 'customer_demographics', 'customer', 'household_demographics',
+        'call_center', 'catalog_page', 'item', 'promotion', 'date_dim', 'time_dim',
+        'ship_mode', 'warehouse'
+    ],
+    'customer': [
+        'customer_address', 'customer_demographics', 'household_demographics', 'date_dim',
+        'store_returns', 'store_sales', 'catalog_returns', 'catalog_sales',
+        'web_returns', 'web_sales'
+    ],
+    'customer_address': [
+        'customer', 'catalog_returns', 'catalog_sales', 'store_returns', 'store_sales',
+        'web_returns', 'web_sales'
+    ],
+    'customer_demographics': [
+        'customer', 'catalog_returns', 'catalog_sales', 'store_returns', 'store_sales',
+        'web_returns', 'web_sales'
+    ],
+    'date_dim': [
+        'call_center', 'catalog_page', 'catalog_returns', 'catalog_sales', 'customer',
+        'inventory', 'promotion', 'store', 'store_returns', 'store_sales', 'web_page',
+        'web_returns', 'web_sales', 'web_site'
+    ],
+    'household_demographics': [
+        'income_band', 'customer', 'catalog_returns', 'catalog_sales',
+        'store_returns', 'store_sales', 'web_returns', 'web_sales'
+    ],
+    'income_band': ['household_demographics'],
+    'inventory': ['date_dim', 'item', 'warehouse'],
+    'item': [
+        'catalog_returns', 'catalog_sales', 'inventory', 'promotion', 'store_returns',
+        'store_sales', 'web_returns', 'web_sales'
+    ],
+    'promotion': [
+        'date_dim', 'item', 'catalog_page', 'catalog_sales', 'store_sales', 'web_sales'
+    ],
+    'reason': ['catalog_returns', 'store_returns', 'web_returns'],
+    'ship_mode': ['catalog_returns', 'catalog_sales', 'web_returns', 'web_sales'],
+    'store': ['store_returns', 'store_sales'],
+    'store_returns': [
+        'customer_address', 'customer_demographics', 'customer', 'household_demographics',
+        'item', 'reason', 'date_dim', 'time_dim', 'store'
+    ],
+    'store_sales': [
+        'customer_address', 'customer_demographics', 'customer', 'household_demographics',
+        'item', 'promotion', 'date_dim', 'time_dim', 'store'
+    ],
+    'time_dim': [
+        'catalog_returns', 'catalog_sales', 'store_returns', 'store_sales',
+        'web_returns', 'web_sales'
+    ],
+    'warehouse': [
+        'catalog_returns', 'catalog_sales', 'inventory', 'web_returns', 'web_sales'
+    ],
+    'web_page': [
+        'date_dim', 'web_returns', 'web_sales'
+    ],
+    'web_returns': [
+        'item', 'reason', 'customer_address', 'customer_demographics', 'customer',
+        'household_demographics', 'date_dim', 'time_dim', 'web_page', 'warehouse',
+        'ship_mode'
+    ],
+    'web_sales': [
+        'customer_address', 'customer_demographics', 'customer', 'household_demographics',
+        'item', 'promotion', 'date_dim', 'time_dim', 'warehouse', 'ship_mode',
+        'web_page', 'web_site'
+    ],
+    'web_site': ['date_dim', 'web_sales']
+}
+
+SSB_JOIN_GRAPH = {
+    'lineorder': ['customer', 'supplier', 'part', 'date'],
+    'lineitem': ['orders', 'part', 'supplier', 'date'],
+    'orders': ['lineitem', 'customer', 'date'],
+    'customer': ['lineorder', 'orders'],
+    'supplier': ['lineorder', 'lineitem'],
+    'part': ['lineorder', 'lineitem'],
+    'date': ['lineorder', 'lineitem', 'orders'],
+}

@@ -139,35 +139,39 @@ class SimQueryFeaturizer(plans_lib.Featurizer):
         # Joined tables: [table: 1].
         joined = node.leaf_ids()
         for rel_id in joined:
+            # print('joined rel_id', rel_id)
+            # print('joined rel_ids', self.workload_info.rel_ids)
             idx = np.where(self.workload_info.rel_ids == rel_id)[0][0]
             vec[idx] = 1.0
 
         # Filtered tables.
         table_id_to_name = lambda table_id: table_id.split(' ')[0]  # Hack.
         # print(node.info)
-        for rel_id, est_rows in node.info['all_filters_est_rows'].items():
-            if rel_id not in joined:
-                # Due to the way we copy Nodes and populate this info field,
-                # leaf_ids() might be a subset of info['all_filters_est_rows'].
-                continue
+        if 'all_filters_est_rows' in node.info:
+            for rel_id, est_rows in node.info['all_filters_est_rows'].items():
+                if rel_id not in joined:
+                    # Due to the way we copy Nodes and populate this info field,
+                    # leaf_ids() might be a subset of info['all_filters_est_rows'].
+                    continue
 
-            idx = np.where(self.workload_info.rel_ids == rel_id)[0][0]
-            total_rows = self.workload_info.table_num_rows[table_id_to_name(
-                rel_id)]
+                idx = np.where(self.workload_info.rel_ids == rel_id)[0][0]
+                total_rows = self.workload_info.table_num_rows[table_id_to_name(
+                    rel_id)]
 
-            # # NOTE: without ANALYZE, for some reason this predicate is
-            # # estimated to have 703 rows, whereas the table only has 4 rows:
-            # #   (kind IS NOT NULL) AND ((kind)::text <> 'production
-            # #   companies'::text)
-            # # With ANALYZE run, this assert passes.
-            # assert est_rows >= 0 and est_rows <= total_rows, (node.info,
-            #                                                   est_rows,
-            #                                                   total_rows)
-            # Assertion is triggered with STACK query, instead replaced by clamping
-            est_rows = max(0, est_rows)
-            est_rows = min(est_rows, total_rows)
+                # # NOTE: without ANALYZE, for some reason this predicate is
+                # # estimated to have 703 rows, whereas the table only has 4 rows:
+                # #   (kind IS NOT NULL) AND ((kind)::text <> 'production
+                # #   companies'::text)
+                # # With ANALYZE run, this assert passes.
+                # assert est_rows >= 0 and est_rows <= total_rows, (node.info,
+                #                                                   est_rows,
+                #                                                   total_rows)
+                # Assertion is triggered with STACK query, instead replaced by clamping
+                est_rows = max(0, est_rows)
+                est_rows = min(est_rows, total_rows)
 
-            vec[idx] = est_rows / total_rows
+                vec[idx] = est_rows / total_rows
+
         return vec
 
     def PerturbQueryFeatures(self, query_feat, distribution):
@@ -646,6 +650,12 @@ class Sim(object):
         hash_key = Sim.HashOfSimData(p)
         if 'stack' in p.workload.query_dir:
             return 'data/sim-data-STACK-{}.pkl'.format(hash_key)
+        elif 'tpcds' in p.workload.query_dir:
+            return 'data/sim-data-TPCDS-{}.pkl'.format(hash_key)
+        elif 'tpch' in p.workload.query_dir:
+            return 'data/sim-data-TPCH-{}.pkl'.format(hash_key)
+        elif 'ssb' in p.workload.query_dir:
+            return 'data/sim-data-SSB-{}.pkl'.format(hash_key)
         else:
             return 'data/sim-data-{}.pkl'.format(hash_key)
 
@@ -678,6 +688,12 @@ class Sim(object):
         hash_key = Sim.HashOfFeaturizedData(p)
         if 'stack' in p.workload.query_dir:
             return 'data/sim-featurized-STACK-{}.pkl'.format(hash_key)
+        elif 'tpcds' in p.workload.query_dir:
+            return 'data/sim-featurized-TPCDS-{}.pkl'.format(hash_key)
+        elif 'tpch' in p.workload.query_dir:
+            return 'data/sim-featurized-TPCH-{}.pkl'.format(hash_key)
+        elif 'ssb' in p.workload.query_dir:
+            return 'data/sim-featurized-SSB-{}.pkl'.format(hash_key)
         else:
             return 'data/sim-featurized-{}.pkl'.format(hash_key)
 

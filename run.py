@@ -31,7 +31,6 @@ import signal
 import time
 import datetime
 import json
-import faiss
 import numpy as np
 
 from absl import app
@@ -70,6 +69,7 @@ import sim as sim_lib
 import pg_executor
 from pg_executor import dbmsx_executor
 import train_utils
+import sqlalchemy
 import experiments  # noqa # pylint: disable=unused-import
 
 FLAGS = flags.FLAGS
@@ -81,6 +81,8 @@ flags.DEFINE_boolean('test_all', False,
 flags.DEFINE_string('checkpoint_dir', None,'Path to model checkpoint to load.')
 flags.DEFINE_string('workload_order', 'default', 'Order of queries in the workload. ')
 flags.DEFINE_string('target_checkpoint_dir', None,'Path to model checkpoint to save.')
+flags.DEFINE_string('workload_dir', None, 'Path to the directory containing workload files.')
+flags.DEFINE_string('test_workload_dir', None, 'Path to the directory containing test workload files.')
 
 def GetDevice():
     return 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -294,7 +296,11 @@ def ParseExecutionResult(result_tup,
         messages.append('{}Running {}: hinted plan\n{}'.format(
             '[Test set] ' if is_test else '', query_name, hinted_plan))
         messages.append('filters')
-        messages.append(pprint.pformat(query_node.info['all_filters']))
+        if 'all_filters' in query_node.info:
+            messages.append(pprint.pformat(query_node.info['all_filters']))
+        else:
+            messages.append('Warning: query_node.info does not have all_filters:')
+            # messages.append(pprint.pformat(query_node.info))
         messages.append('')
         messages.append('q{},{:.1f},{}'.format(query_node.info['query_name'],
                                                real_cost, hint_str))
@@ -356,6 +362,12 @@ def TrainSim(p, loggers=None):
     sim_p = sim_lib.Sim.Params()
     if 'stack' in p.query_dir:
         sim_p.workload = envs.STACK.Params()
+    elif 'ssb' in p.query_dir:
+        sim_p.workload = envs.SSB.Params()
+    elif 'tpch' in p.query_dir:
+        sim_p.workload = envs.TPCH.Params()
+    elif 'tpcds' in p.query_dir:
+        sim_p.workload = envs.TPCDS.Params()
     else:
         sim_p.workload.query_dir = p.query_dir
         sim_p.workload.query_glob = p.query_glob
@@ -740,6 +752,10 @@ class BalsaAgent(object):
                   '1 run only and see if tasks go through or get stuck.'
                   '  Exception:\n   {}'.format(e))
         # Workload.
+        if p.workload_dir is not None:
+            print('Using workload dir:', p.workload_dir)
+            self.workload_dir = p.workload_dir
+        
         self.workload = self._MakeWorkload()
         self.all_nodes = self.workload.Queries(split='all')
         self.train_nodes = self.workload.Queries(split='train')
@@ -781,11 +797,6 @@ class BalsaAgent(object):
             print('Using test query dir:', p.test_query_dir)
             self.test_query_dir = p.test_query_dir
 
-        # Initialize FAISS index
-        self.embedding_dim = 64  # Must match your model's embedding size
-        self.faiss_index = faiss.IndexFlatL2(self.embedding_dim)
-        self.embedding_metadata = []  # Stores (query_name, plan_hint) tuples
-
         # Cleanup handlers.  Ensures that the Ray cluster state remains healthy
         # even if this driver program is killed.
         signal.signal(signal.SIGTERM, self.Cleanup)
@@ -799,20 +810,42 @@ class BalsaAgent(object):
 
     def _MakeWorkload(self):
         p = self.params
+        if p.workload_dir is not None:
+            p.query_dir = p.workload_dir
+            print('The query directory is:')
+            print(p.query_dir)
+
         if os.path.isfile(p.init_experience):
             # Load the expert optimizer experience.
             with open(p.init_experience, 'rb') as f:
                 workload = pickle.load(f)
             # Filter queries based on the current query_glob.
-            workload.FilterQueries(p.query_dir, p.query_glob, p.test_query_glob)
+            # workload.FilterQueries(p.query_dir, p.query_glob, p.test_query_glob)
+
+            # Separate directory filtering.
+            workload.FilterQueries_sep_dirs(p.query_dir, p.query_glob, p.test_query_glob, p.test_query_dir)
         else:
             if 'stack' in p.query_dir:
+                print('Using the Stack workload.')
                 wp = envs.STACK.Params()
+            elif 'tpch' in p.query_dir:
+                print('Using the TPC-H workload.')
+                wp = envs.TPCH.Params()
+            elif 'tpcds' in p.query_dir:
+                print('Using the TPC-DS workload.')
+                wp = envs.TPCDS.Params()
+            elif 'ssb' in p.query_dir:
+                print('Using the SSB workload.')
+                wp = envs.SSB.Params()
             else:
+                print('Using the JoinOrderBenchmark workload.')
                 wp = envs.JoinOrderBenchmark.Params()
             wp.query_dir = p.query_dir
             wp.query_glob = p.query_glob
             wp.test_query_dir = p.test_query_dir
+            wp.skip_neo_processed = p.skip_neo_processed
+            wp.skip_balsa_processed = p.skip_balsa_processed
+            wp.require_loger_dir = p.require_loger_dir
             wp.test_query_glob = None
             if hasattr(p, 'workload_order_file'):
                 print('Using workload order file:', p.workload_order_file)
@@ -864,6 +897,9 @@ class BalsaAgent(object):
             # computed normalization stats.
             query_featurizer_cls = self.GetOrTrainSim().query_featurizer
         if p.test_query_dir is not None:
+            p.test_query_glob = ['*.sql']
+            print('Building test experience buffer...')
+            print('Workload info:', wi)
             exp = Experience(self.test_nodes,
                             p.tree_conv,
                             workload_info=wi,
@@ -925,6 +961,7 @@ class BalsaAgent(object):
             # Reloading replay buffers: let's train on all data.
             on_policy = False
         # TODO: avoid repeatedly featurizing already-featurized nodes.
+        print("\n[DATASET-DEBUG] Featurizing workload...")
         tup = self.exp.featurize(
             rewrite_generic=not p.plan_physical,
             verbose=False,
@@ -935,6 +972,7 @@ class BalsaAgent(object):
             use_last_n_iters=p.use_last_n_iters,
             use_new_data_only=p.use_new_data_only,
             skip_training_on_timeouts=p.skip_training_on_timeouts)
+        print("[DATASET-DEBUG] Featurization complete.")
         # [np.ndarray], torch.Tensor, torch.Tensor, [float].
         all_query_vecs, all_feat_vecs, all_pos_vecs, all_costs = tup[:4]
         num_new_datapoints = None
@@ -983,10 +1021,14 @@ class BalsaAgent(object):
             self.label_mean = dataset.mean
             self.label_std = dataset.std
 
+        print("\n" + "="*40)
+        print("--- DataLoader Debug Information ---")
         if self.exp_val is None:
             assert 0 <= p.validate_fraction <= 1, p.validate_fraction
             num_train = int(len(dataset) * (1 - p.validate_fraction))
             num_validation = len(dataset) - num_train
+            print(f"[DATASET-DEBUG] Total samples in experience buffer: {len(dataset)}")
+            print(f"[DATASET-DEBUG] Splitting into {num_train} training samples and {num_validation} validation samples.")
             assert num_train > 0 and num_validation >= 0, len(dataset)
             print('num_train={} num_validation={}'.format(
                 num_train, num_validation))
@@ -1017,6 +1059,11 @@ class BalsaAgent(object):
                                           cross_entropy=p.cross_entropy)
             train_ds, val_ds = dataset, dataset_val
             train_labels = all_costs
+            num_train = len(train_ds)
+            num_validation = len(val_ds)
+            print(f"[DATASET-DEBUG] Using separate experience buffers.")
+            print(f"[DATASET-DEBUG] Training samples: {num_train}")
+            print(f"[DATASET-DEBUG] Validation samples: {num_validation}")
         if p.tree_conv:
             collate_fn = ds.InputBatch
         else:
@@ -1036,6 +1083,14 @@ class BalsaAgent(object):
                                                      collate_fn=collate_fn)
         else:
             val_loader = None
+        print(f"[DATASET-DEBUG] Batch size (p.bs): {p.bs}")
+        print(f"[DATASET-DEBUG] Number of training batches (steps per epoch): {len(train_loader)}")
+        if val_loader:
+            print(f"[DATASET-DEBUG] Number of validation batches: {len(val_loader)}")
+        else:
+            print("[DATASET-DEBUG] No validation loader.")
+        print("="*40 + "\n")
+
         if log:
             self._LogDatasetStats(train_labels, num_new_datapoints)
 
@@ -1189,6 +1244,8 @@ class BalsaAgent(object):
         print('Loaded value network checkpoint at iter',
               self.curr_value_iter)
 
+        return plans_dataset
+
     def timeout_label(self):
         return 4096 * 1000
 
@@ -1243,8 +1300,8 @@ class BalsaAgent(object):
 
     def RunBaseline(self):
         p = self.params
-        print('Dropping buffer cache.')
-        postgres.DropBufferCache()
+        # print('Dropping buffer cache.')
+        # postgres.DropBufferCache()
         print('Running queries as-is (baseline PG performance)...')
 
         def Args(node):
@@ -1294,6 +1351,12 @@ class BalsaAgent(object):
         # engine's latencies.  This mainly affects debug strings.
         if 'stack' in p.query_dir:
             Save(self.workload, './data/initial_policy_data__stack.pkl')
+        elif 'tpch' in p.query_dir:
+            Save(self.workload, './data/initial_policy_data__tpch.pkl')
+        elif 'tpcds' in p.query_dir:
+            Save(self.workload, './data/initial_policy_data__tpcds.pkl')
+        elif 'ssb' in p.query_dir:
+            Save(self.workload, './data/initial_policy_data__ssb.pkl')
         else:
             Save(self.workload, './data/initial_policy_data.pkl')
         self.LogExpertExperience(self.train_nodes, self.test_nodes)
@@ -1458,6 +1521,193 @@ class BalsaAgent(object):
 
         return predicted_latency, found_plan
 
+    def _handle_execution_failure(self, task, task_lambda, kwarg, max_retries=3):
+        """Handles retries for a single Ray execution task, with server health checks."""
+        for attempt in range(max_retries):
+            try:
+                # Wait for the initial task to complete
+                result_ref = ray.get(task)
+                # If the task returned another reference, resolve it
+                if isinstance(result_ref, ray.ObjectRef):
+                    result_tup = ray.get(result_ref)
+                else:
+                    result_tup = result_ref
+                return result_tup, False # Success, not a cached plan
+            
+            # Catch a broader set of connection-related errors
+            except (ray.exceptions.RayTaskError, psycopg2.Error, sqlalchemy.exc.OperationalError) as e:
+                is_disk_full = 'psycopg2.errors.DiskFull' in str(e)
+                print(f"Exception on attempt {attempt + 1}/{max_retries} for q{kwarg['query_name']}:\n{e}")
+                num_secs = 10
+                print(f"Sleeping for {num_secs:.1f}s before retrying...")
+                time.sleep(num_secs)
+                if attempt < max_retries - 1:
+                    # --- NEW HEALTH CHECK LOGIC ---
+                    print("--> Checking database server health before retrying...")
+                    is_online, message = postgres.CheckServerHealth()
+                    print(f"--> Health Check Result: {message}")
+                    
+                    if not is_online:
+                        print("--> Server is not healthy. Aborting retries and treating as timeout.")
+                        # Return a timeout result to signal catastrophic failure
+                        return pg_executor.Result(result=[], has_timeout=True, server_ip=None), False
+                    # --- END OF NEW LOGIC ---
+
+                    # If health check passes, proceed with original retry logic
+                    print(f"Server is healthy. Sleeping for {num_secs:.1f}s before retrying...")
+                    time.sleep(num_secs)
+                    print("Resubmitting task.")
+                    task = task_lambda() # Resubmit the task to get a new future
+                
+                elif is_disk_full:
+                    # After multiple failures, if the error was DiskFull, treat as a timeout
+                    print('DiskFull error persisted; treating as a timeout.')
+                    return pg_executor.Result(result=[], has_timeout=True, server_ip=None), False
+                else:
+                    # If all retries fail for other reasons, raise the exception
+                    print('All retries failed.')
+                    raise e
+        return None, False # Should not be reached
+
+    def PlanAndExecuteSeq(self, model, planner, is_test=False, max_retries=3, save_lqo_plans=False, optimizer='balsa'):
+        p = self.params
+        model.eval()
+        
+        all_to_execute = []
+        all_execution_results = []
+        query_execution_statistics = dict()
+        
+        if p.sim:
+            sim = self.GetOrTrainSim()
+
+        # if p.drop_cache and p.use_local_execution:
+        #     print('Dropping buffer cache.')
+        #     postgres.DropBufferCache()
+
+        nodes = self.test_nodes if is_test else self.train_nodes
+        if not is_test:
+            self.timeout_controller.OnIterStart()
+            
+        planner_config = optim.PlannerConfig.Get(p.planner_config) if p.planner_config else None
+        epsilon_greedy_within_beam_search = p.epsilon_greedy_within_beam_search if not is_test and p.epsilon_greedy_within_beam_search > 0 else 0
+
+        self.timer.Start('plan_and_execute_test' if is_test else 'plan_and_execute_train')
+        
+        # --- Main Sequential Loop ---
+        for i, node in enumerate(nodes):
+            print(f"--- Processing query {i+1}/{len(nodes)}: {node.info['query_name']} ---")
+            
+            # 1. Plan
+            inference_start = time.time()
+            planning_time, found_plan, predicted_latency, found_plans = planner.plan(
+                node, p.search_method, bushy=p.bushy, return_all_found=True,
+                verbose=False, planner_config=planner_config,
+                epsilon_greedy=epsilon_greedy_within_beam_search,
+                avoid_eq_filters=is_test and p.avoid_eq_filters,
+            )
+            
+            # 2. Select Plan (Exploration)
+            predicted_latency, found_plan = self.SelectPlan(
+                found_plans, predicted_latency, found_plan, planner, node)
+            
+            hint_str = HintStr(found_plan, with_physical_hints=p.plan_physical, engine=p.engine)
+            query_inference_time = time.time() - inference_start
+            
+            # Prepare arguments for execution
+            curr_timeout = self.timeout_controller.GetTimeout(node) if not is_test else 900000
+            
+            all_to_execute.append((node.info['sql_str'], hint_str, planning_time, 
+                                   found_plan, predicted_latency, curr_timeout))
+
+            predicted_costs = sim.Predict(node, [tup[1] for tup in found_plans]) if p.sim else None
+            predicted_latency = planner.infer(node, [node])[0]
+            node.info['curr_predicted_latency'] = predicted_latency
+
+            kwarg = {
+                'query_name': node.info['query_name'], 'sql_str': node.info['sql_str'],
+                'hint_str': hint_str, 'hinted_plan': found_plan, 'query_node': node,
+                'predicted_latency': predicted_latency, 'curr_timeout_ms': curr_timeout,
+                'found_plans': found_plans, 'predicted_costs': predicted_costs,
+                'is_test': is_test, 'use_local_execution': p.use_local_execution,
+                'plan_physical': p.plan_physical, 'engine': p.engine,
+            }
+            
+            # Update statistics for logging
+            q_exec_stat = {'query_name': kwarg['query_name'], 'sql_str': kwarg['sql_str'],
+                           'hint_str': kwarg['hint_str'], 'inference_time': query_inference_time}
+            query_execution_statistics[q_exec_stat['query_name']] = q_exec_stat
+
+            # 3. Execute
+            exec_result = self.query_execution_cache.Get(key=(node.info['query_name'], hint_str)) if p.use_cache else None
+            is_cached_plan = exec_result is not None
+            
+            if not is_cached_plan:
+                # Late-binding lambda for retries
+                task_lambda = lambda: ExecuteSql.options(resources={f'node:{ray.util.get_node_ip_address()}': 1}).remote(**kwarg)
+                task = task_lambda()
+                result_tup, _ = self._handle_execution_failure(task, task_lambda, kwarg, max_retries)
+            else:
+                result_tup = exec_result
+
+            # 4. Parse and Save Results for the current query
+            result_tups = ParseExecutionResult(result_tup, **kwarg)
+            # print(result_tups[-1])  # Print messages
+
+            # Update stats with execution times
+            if result_tups[1] != -1: # Not a timeout
+                json_dict = result_tups[0].result[0][0][0]
+                q_exec_stat['execution_time'] = json_dict['Execution Time']
+                q_exec_stat['planning_time'] = json_dict['Planning Time']
+            else:
+                print("Query timed out")
+                q_exec_stat['execution_time'] = -1
+                q_exec_stat['planning_time'] = -1
+            print(f"\t{q_exec_stat['query_name']}: Inference {q_exec_stat['inference_time']:.4f}\tPlanning {q_exec_stat['planning_time']:.4f}\tExecution {q_exec_stat['execution_time']:.4f}")
+            
+            # Save plan and metrics immediately
+            from pathlib import Path
+            if is_test and save_lqo_plans and result_tups[1] != -1:
+                base_dir = Path(node.info['path']).parent
+                output_dir = os.path.join(base_dir, optimizer.upper())
+                os.makedirs(output_dir, exist_ok=True)
+                
+                plan_path = os.path.join(output_dir, f"{node.info['query_name']}_{optimizer}_plan.json")
+                with open(plan_path, 'w') as f:
+                    json.dump(result_tups[0].result[0][0][0], f, indent=4)
+                
+                metrics_path = os.path.join(output_dir, f"{node.info['query_name']}_{optimizer}_metrics.json")
+                metrics_data = {
+                    'query_name': node.info['query_name'], 'sql': node.info['sql_str'], 'hint_str': hint_str,
+                    'inference_time': q_exec_stat['inference_time'], 'planning_time': q_exec_stat['planning_time'],
+                    'predicted_latency': predicted_latency, 'actual_latency': q_exec_stat['execution_time']
+                }
+                with open(metrics_path, 'w') as f:
+                    json.dump(metrics_data, f, indent=4)
+                print(f"Saved plan and metrics for {node.info['query_name']} to {output_dir}")
+
+            all_execution_results.append(result_tups[:-1])
+
+            # Increment counts for training
+            if not is_test:
+                if is_cached_plan:
+                    self.curr_iter_skipped_queries += 1
+                else:
+                    self.num_query_execs += 1
+        
+        # --- End of Loop ---
+        self.timer.Stop('plan_and_execute_test' if is_test else 'plan_and_execute_train')
+
+        # Log final statistics
+        experiment_cls = wandb.run.config['cls'].split('/')[-1] if 'cls' in wandb.run.config else 'unknown'
+        query_log_file_name = f"logs/{self.initialization_time}__{experiment_cls}__plan_and_execute.txt"
+        os.makedirs(os.path.dirname(query_log_file_name), exist_ok=True)
+        with open(query_log_file_name, 'a') as qlf:
+            for k, curr in query_execution_statistics.items():
+                output_string = f"{curr['query_name']};{curr['inference_time']:.4f};{curr['planning_time']:.4f};{curr['execution_time']:.4f}\n"
+                qlf.write(output_string)
+
+        return all_to_execute, all_execution_results
+
     def PlanAndExecute(self, model, planner, is_test=False, max_retries=3, save_lqo_plans = False, optimizer='balsa'):
         p = self.params
         model.eval()
@@ -1505,13 +1755,6 @@ class BalsaAgent(object):
             predicted_latency, found_plan = self.SelectPlan(
                 found_plans, predicted_latency, found_plan, planner, node)
             
-            if save_lqo_plans and is_test:
-                embedding = model.model.final_embedding
-                print(embedding.shape)
-                self._AddToFaissIndex(embedding, 
-                                    node.info['query_name'],
-                                    found_plan.hint_str())                
-            
             print('{}q{}, predicted time: {:.1f}'.format(
                 '[Test set] ' if is_test else '', node.info['query_name'],
                 predicted_latency))
@@ -1538,8 +1781,8 @@ class BalsaAgent(object):
             if is_test:
                 curr_timeout = None
 
-                # Previous 18min timeout for disk full reduced to 3 minutes (3 * 60 * 1000)
-                curr_timeout = 180000
+                # Previous 18min timeout for disk full reduced to 5 minutes (5 * 60 * 1000)
+                curr_timeout = 300000
             else:
                 curr_timeout = self.timeout_controller.GetTimeout(node)
             print('q{},(predicted {:.1f}),{}'.format(node.info['query_name'],
@@ -1599,8 +1842,6 @@ class BalsaAgent(object):
                     min_p_latency = p_latency
                     min_pos = pos
             positions_of_min_predicted.append(min_pos)
-
-        self.SaveFaissIndex()
 
         self.timer.Stop('plan_test_set' if is_test else 'plan')
         self.timer.Start('wait_for_executions_test_set'
@@ -1723,58 +1964,41 @@ class BalsaAgent(object):
             # import Path from pathlib
             from pathlib import Path
             if is_test and save_lqo_plans:
-                base_dir = Path(node.info['path']).parent
-                try:
-                    output_dir = os.path.join(base_dir, optimizer.upper())
-                    
-                    # Empty the directory if it exists, then create fresh
-                    if os.path.exists(output_dir):
-                        for filename in os.listdir(output_dir):
-                            file_path = os.path.join(output_dir, filename)
-                            try:
-                                if os.path.isfile(file_path) or os.path.islink(file_path):
-                                    os.unlink(file_path)
-                                elif os.path.isdir(file_path):
-                                    shutil.rmtree(file_path)
-                            except Exception as e:
-                                print(f'Failed to delete {file_path}. Reason: {e}')
-                    
-                    # Create the directory (fresh if we just cleaned it, or new)
-                    os.makedirs(output_dir, exist_ok=True)
+                # Save the execution plan and metrics in JSON format
+                current_node = kwargs[i]['query_node']
+                query_name = current_node.info['query_name']
+                execution_plan = result_tups[0].result[0][0][0] if result_tups[1] != -1 else None
 
-                    query_name = node.info['query_name']
-                    
-                    # Save the execution plan
-                    execution_plan = result_tups[0].result[0][0][0] if result_tups[1] != -1 else None
-                    if execution_plan is not None:
-                        # Save execution plan
-                        plan_filename = f"{query_name}_{optimizer}_plan.json"
-                        plan_path = os.path.join(output_dir, plan_filename)
-                        with open(plan_path, 'w') as json_file:
-                            json.dump(execution_plan, json_file, indent=4)
-                        print(f"Execution plan saved to {plan_path}")
-                        
-                        # Save query metrics in a separate file
-                        metrics_filename = f"{query_name}_{optimizer}_metrics.json"
-                        metrics_path = os.path.join(output_dir, metrics_filename)
-                        
-                        metrics_data = {
-                            'query_name': query_name,
-                            'sql': node.info['sql_str'],
-                            'hint_str': hint_str,
-                            'inference_time': q_exec_stat['inference_time'],
-                            'planning_time': q_exec_stat['planning_time'],
-                            'predicted_latency': predicted_latency,
-                            'actual_latency': q_exec_stat['execution_time']
-                        }
-                        
-                        with open(metrics_path, 'w') as json_file:
-                            json.dump(metrics_data, json_file, indent=4)
-                        print(f"Query metrics saved to {metrics_path}")
+                base_dir = Path(current_node.info['path']).parent
+                output_dir = os.path.join(base_dir, optimizer.upper())
+                os.makedirs(output_dir, exist_ok=True)
 
-                except Exception as e:
-                    print(f"Failed to save execution data: {str(e)}")
+                if execution_plan is not None:
+                    # Save execution plan
+                    plan_filename = f"{query_name}_{optimizer}_plan.json"
+                    plan_path = os.path.join(output_dir, plan_filename)
+                    with open(plan_path, 'w') as json_file:
+                        json.dump(execution_plan, json_file, indent=4)
+                    print(f"Execution plan saved to {plan_path}")
                     
+                    # Save query metrics in a separate file
+                    metrics_filename = f"{query_name}_{optimizer}_metrics.json"
+                    metrics_path = os.path.join(output_dir, metrics_filename)
+                    
+                    metrics_data = {
+                        'query_name': query_name,
+                        'sql': node.info['sql_str'],
+                        'hint_str': hint_str,
+                        'inference_time': q_exec_stat['inference_time'],
+                        'planning_time': q_exec_stat['planning_time'],
+                        'predicted_latency': -predicted_latency,
+                        'actual_latency': q_exec_stat['execution_time']
+                    }
+                    
+                    with open(metrics_path, 'w') as json_file:
+                        json.dump(metrics_data, json_file, indent=4)
+                    print(f"Query metrics saved to {metrics_path}")
+
             execution_results.append(result_tups[:-1])
             # Increment counts for training.
             if not is_test:
@@ -1794,6 +2018,9 @@ class BalsaAgent(object):
             experiment_cls = 'unknown'
 
         query_log_file_name = f"logs/{self.initialization_time}__{experiment_cls}__plan_and_execute.txt"
+        # Ensure the logs directory exists
+        os.makedirs(os.path.dirname(query_log_file_name), exist_ok=True)
+        
         with open(query_log_file_name, 'a') as qlf:
             for k in query_execution_statistics.keys():
                 curr = query_execution_statistics[k]
@@ -1803,37 +2030,6 @@ class BalsaAgent(object):
 
         return to_execute, execution_results
 
-    def _AddToFaissIndex(self, embedding, query_name, plan_hint):
-        """Add a new embedding to the FAISS index with metadata."""
-        # Ensure embedding is the right shape [1, 128]
-        embedding = np.array(embedding).astype('float32')
-        if len(embedding.shape) == 1:
-            embedding = embedding.reshape(1, -1)
-            
-        # Add to FAISS index
-        self.faiss_index.add(embedding)
-        
-        # Store metadata
-        self.embedding_metadata.append((query_name, plan_hint))
-        
-    def SaveFaissIndex(self, filename="plan_embeddings.faiss"):
-        """Save the FAISS index and metadata to disk."""
-        # Save the FAISS index
-        faiss.write_index(self.faiss_index, filename)
-        
-        # Save metadata
-        metadata_file = filename + ".meta"
-        with open(metadata_file, "wb") as f:
-            pickle.dump(self.embedding_metadata, f)
-            
-    def LoadFaissIndex(self, filename="plan_embeddings.faiss"):
-        """Load a previously saved FAISS index."""
-        self.faiss_index = faiss.read_index(filename)
-        
-        # Load metadata
-        metadata_file = filename + ".meta"
-        with open(metadata_file, "rb") as f:
-            self.embedding_metadata = pickle.load(f)        
 
     def FeedbackExecution(self, to_execute, execution_results):
         p = self.params
@@ -2094,8 +2290,7 @@ class BalsaAgent(object):
                                self.curr_value_iter))
             self.LogScalars(to_log)
         self.SaveBestPlans()
-        if (self.curr_value_iter + 1) % 5 == 0:
-            self.SaveAgent(model, iter_total_latency, curr_value_iter=self.curr_value_iter)
+        self.SaveAgent(model, iter_total_latency, curr_value_iter=self.curr_value_iter)
         # Run and log test queries.
         self.EvaluateTestSet(model, planner)
 
@@ -2203,22 +2398,18 @@ class BalsaAgent(object):
         torch.save(model.state_dict(), ckpt_path)
         
         if self.target_checkpoint_dir is not None:
-            # Create target directory if it doesn't exist
             target_ckpt_dir = os.path.join(self.target_checkpoint_dir, 'checkpoints')
-            if not os.path.exists(target_ckpt_dir):
-                os.makedirs(target_ckpt_dir)
-            
-            # If a target directory is specified, save the checkpoint there.
-            target_ckpt_path = os.path.join(target_ckpt_dir, f'checkpoint__epoch{curr_value_iter}.pt')
+            epoch_dir = os.path.join(target_ckpt_dir, f'epoch{self.curr_value_iter}')
+            # Create the target directory if it does not exist.
+            os.makedirs(epoch_dir, exist_ok=True)
+            target_ckpt_path = os.path.join(epoch_dir, f'checkpoint.pt')
             torch.save(model.state_dict(), target_ckpt_path)
-            print('Saved checkpoint to:', target_ckpt_path)
-
-        # Saving intermediate checkpoints as well
-        if curr_value_iter is not None:
-            base_folder_path = os.path.join('checkpoints', self.initialization_time)
-            if not os.path.exists(base_folder_path):
-                os.makedirs(base_folder_path)
-            torch.save(model.state_dict(), os.path.join(base_folder_path, f'checkpoint__iter{curr_value_iter}.pt'))
+            target_ckpt_metadata_path = os.path.join(epoch_dir, 'checkpoint-metadata.txt')
+            SaveText(
+                'value_iter,{}'.format(self.curr_value_iter),
+                target_ckpt_metadata_path)
+            print('Saved iter={} checkpoint to: {}'.format(self.curr_value_iter,
+                                                        target_ckpt_path))
 
         SaveText(
             'value_iter,{}'.format(self.curr_value_iter),
@@ -2404,6 +2595,14 @@ def Main(argv):
     if FLAGS.target_checkpoint_dir:
         print(f"Using checkpoint directory: {FLAGS.target_checkpoint_dir}")
         p.target_checkpoint_dir = FLAGS.target_checkpoint_dir
+
+    if FLAGS.workload_dir:
+        print(f"Using workload directory: {FLAGS.workload_dir}")
+        p.workload_dir = FLAGS.workload_dir
+
+    if FLAGS.test_workload_dir:
+        print(f"Using test workload directory: {FLAGS.test_workload_dir}")
+        p.test_query_dir = FLAGS.test_workload_dir
 
     agent = BalsaAgent(p)
 

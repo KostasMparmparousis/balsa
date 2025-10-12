@@ -22,6 +22,8 @@ from functools import lru_cache
 import datetime
 from balsa.util import plans_lib
 import pg_executor
+import psycopg2
+import sqlalchemy
 
 
 def GetServerVersion():
@@ -54,25 +56,70 @@ def _SetGeneticOptimizer(flag, cursor):
     assert cursor.statusmessage == 'SET'
 
 
-def DropBufferCache():
-    # WARNING: no effect if PG is running on another machine
-    #subprocess.check_output(['free', '&&', 'sync'])
-    #subprocess.check_output(
-    #    ['sudo', 'sh', '-c', 'echo 3 > /proc/sys/vm/drop_caches'])
-    #subprocess.check_output(['free'])
-
-    with pg_executor.Cursor() as cursor:
-        cursor.execute('DISCARD ALL;')        
-
 # def DropBufferCache():
-#     try:
-#         # Clear PostgreSQL's internal caches
-#         with pg_executor.Cursor() as cursor:
-#             # Discard all temporary data and caches
-#             cursor.execute('SELECT clear_cache();')
-#             print("PostgreSQL caches cleared successfully.")
-#     except Exception as e:
-#         print(f"Failed to clear PostgreSQL caches: {e}")        
+#     # WARNING: no effect if PG is running on another machine
+#     #subprocess.check_output(['free', '&&', 'sync'])
+#     #subprocess.check_output(
+#     #    ['sudo', 'sh', '-c', 'echo 3 > /proc/sys/vm/drop_caches'])
+#     #subprocess.check_output(['free'])
+
+#     with pg_executor.Cursor() as cursor:
+#         cursor.execute('DISCARD ALL;')        
+
+# MODIFIED: Replaced the old implementation with one that calls the clear_cache() UDF.
+def DropBufferCache():
+    """
+    Executes the custom 'clear_cache()' UDF to clear PostgreSQL's data buffers.
+
+    This is intended for benchmarking to ensure a cold-cache state.
+    """
+    print("Attempting to clear PostgreSQL internal caches via clear_cache() UDF...")
+    try:
+        # Use the standard Cursor context manager, which gets a connection from the pool.
+        with pg_executor.Cursor() as cursor:
+            # Execute the user-defined function.
+            cursor.execute('SELECT clear_cache();')
+            print("PostgreSQL caches cleared successfully.")
+    except psycopg2.errors.UndefinedFunction:
+        print("\nERROR: FAILED to clear caches.")
+        print("  -> The user-defined function 'clear_cache()' does not exist in the database.")
+        print("  -> Please ensure the UDF is created before running the pipeline.\n")
+        # Re-raise the exception to halt execution if cache clearing is critical.
+        raise
+    except Exception as e:
+        # Catch other potential issues (e.g., connection problems)
+        print(f"An unexpected error occurred while trying to clear caches: {e}")
+        raise
+
+def CheckServerHealth():
+    """
+    Attempts a simple query to check if the database server is responsive.
+
+    Returns:
+        tuple: (is_online: bool, message: str)
+    """
+    try:
+        # Uses the same pooled cursor as the rest of the application
+        with pg_executor.Cursor() as cursor:
+            cursor.execute('SELECT 1;')
+            if cursor.fetchone() == (1,):
+                return (True, "Server is online and responsive.")
+            else:
+                return (False, "Server responded unexpectedly (did not return 1).")
+    except sqlalchemy.exc.OperationalError as e:
+        # This catches errors that happen *before* a command can be sent.
+        err_str = str(e).lower()
+        if "connection refused" in err_str:
+            return (False, "Health Check FAILED: Server is offline (Connection refused).")
+        if "the database system is in recovery mode" in err_str:
+            return (False, "Health Check FAILED: Server is in recovery mode.")
+        if "password authentication failed" in err_str:
+            return (False, "Health Check FAILED: Password authentication failed.")
+        # Catch-all for other SQLAlchemy connection issues
+        return (False, f"Health Check FAILED: Server is unreachable. Reason: {e}")
+    except Exception as e:
+        # Catch-all for any other unexpected issues.
+        return (False, f"An unexpected error occurred during health check: {e}")
 
 def ExplainAnalyzeSql(sql,
                       comment=None,
@@ -251,6 +298,9 @@ def _run_explain(explain_str,
     else:
         s = str(explain_str).rstrip() + '\n' + sql
 
+    # Disable Bitmap Index Scans
+    # s = "SET enable_bitmapscan = off;\n" + s
+
     file_prefix = pg_executor_timestamp()
     if remote:
         assert cursor is None
@@ -297,6 +347,7 @@ def ParsePostgresPlanJson(json_dict):
             curr_node.info['filter'] = json_dict['Filter']
 
         if 'Scan' in op and select_exprs:
+        #     if op != 'Bitmap Index Scan' and 'Alias' in json_dict:            
             # Record select exprs that belong to this leaf.
             # Assume: SELECT <exprs> are all expressed in terms of aliases.
             filtered = _FilterExprsByAlias(select_exprs, json_dict['Alias'])
@@ -403,6 +454,49 @@ def GetAllTableNumRows(rel_names):
         'comment': 103557557,
         'answer': 6343509,
         'post_link': 2264333,
+        
+        'customer': 1499999,
+        'lineitem': 59986051,
+        'nation': 24,
+        'orders': 14999999,
+        'part': 1999999,
+        'partsupp': 0,
+        'region': 4,
+        'supplier': 99999,
+        
+        'date_dim': 73049,
+        'dbgen_version': 1,
+        'catalog_page': 12000,
+        'catalog_returns': 1439749,
+        'catalog_sales': 14401261,
+        'call_center': 24,
+        'web_page': 200,
+        'web_returns': 719217,
+        'web_sales': 7197566,
+        'web_site': 42,
+        'inventory': 133110000,
+        'item': 102000,
+        'store_returns': 2875432,
+        'store_sales': 28800991,
+        'store': 102,
+        'household_demographics': 7200,
+        'customer_address': 250000,
+        'customer_demographics': 1920800,
+        'customer': 500000,
+        'time_dim': 86400,
+        'income_band': 20,
+        'promotion': 500,
+        'reason': 45,
+        'ship_mode': 20,
+        'warehouse': 10,
+        
+        'lineorder': 6001171,
+        'lineitem': 6001171,   
+        'orders': 1500000,    
+        'customer': 30000,
+        'supplier': 2000,
+        'part': 200000,
+        'date': 2556
     }
 
     d = {}

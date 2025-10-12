@@ -179,8 +179,64 @@ STACK__BASE_QUERY_SPLIT_1__TEST_QUERIES = [
 'q13__d383cd5b4aee7d3f73508e2a1fe5f6d0f7dd42a2.sql', 'q13__d4707be2adfdbc842f42acb1fc16e3a43faf7474.sql',
 ]
 
-# ===================================================================
+# ========================= SSB ===================================
 
+SSB__RANDOM_SPLIT_1__TEST_QUERIES = [ 'q1_1.sql', 'q1_3.sql', 'q3_2.sql', 'q3_4.sql', 'q4_1.sql']
+
+SSB__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES = [ 'q1_1.sql', 'q2_3.sql', 'q3_1.sql', 'q4_2.sql']
+
+SSB__BASE_QUERY_SPLIT_1__TEST_QUERIES = [ 'q2_1.sql', 'q2_2.sql', 'q2_3.sql', 'q4_1.sql', 'q4_2.sql', 'q4_3.sql']
+
+# ========================= TPC-DS ===================================
+
+TPCDS__RANDOM_SPLIT_1__TEST_QUERIES = [
+    'query18_3.sql', 'query20_1.sql', 'query27_2.sql', 'query43_2.sql', 'query55_1.sql',
+    'query62_1.sql', 'query82_2.sql', 'query84_2.sql', 'query91_2.sql', 'query98_2.sql',
+    'query99_1.sql'
+]
+
+TPCDS__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES = [
+    'query12_2.sql', 'query18_2.sql', 'query20_3.sql', 'query26_2.sql', 'query27_3.sql',
+    'query37_3.sql', 'query3_1.sql', 'query42_3.sql', 'query43_1.sql', 'query50_2.sql',
+    'query52_3.sql', 'query55_1.sql', 'query62_2.sql', 'query7_1.sql', 'query82_1.sql',
+    'query84_3.sql', 'query91_3.sql', 'query96_1.sql', 'query98_2.sql', 'query99_2.sql'
+]
+
+TPCDS__BASE_QUERY_SPLIT_1__TEST_QUERIES = [
+    'query12_1.sql', 'query12_2.sql', 'query12_3.sql', 'query26_1.sql', 'query26_2.sql',
+    'query26_3.sql', 'query27_1.sql', 'query27_2.sql', 'query27_3.sql', 'query3_1.sql',
+    'query3_2.sql', 'query3_3.sql', 'query43_1.sql', 'query43_2.sql', 'query43_3.sql',
+    'query50_1.sql', 'query50_2.sql', 'query50_3.sql', 'query82_1.sql', 'query82_2.sql',
+    'query82_3.sql', 'query91_1.sql', 'query91_2.sql', 'query91_3.sql', 'query98_1.sql',
+    'query98_2.sql', 'query98_3.sql', 'query99_1.sql', 'query99_2.sql', 'query99_3.sql'
+]
+
+# ========================= TPC-H ===================================
+
+TPCH__RANDOM_SPLIT_1__TEST_QUERIES = [
+    '10_4.sql', '10_5.sql', '12_3.sql', '13_2.sql', '13_3.sql',
+    '13_4.sql', '13_8.sql', '14_3.sql', '3_4.sql', '5_3.sql',
+    '5_4.sql', '5_6.sql', '7_2.sql', '7_6.sql', '8_1.sql',
+    '8_3.sql'
+]
+
+TPCH__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES = [
+    '10_9.sql', '12_9.sql', '13_7.sql', '14_10.sql', '3_1.sql',
+    '5_2.sql', '7_5.sql', '8_5.sql'
+]
+
+TPCH__BASE_QUERY_SPLIT_1__TEST_QUERIES = [
+    '12_1.sql', '12_10.sql', '12_2.sql', '12_3.sql', '12_4.sql',
+    '12_5.sql', '12_6.sql', '12_7.sql', '12_8.sql', '12_9.sql',
+    '14_1.sql', '14_10.sql', '14_2.sql', '14_3.sql', '14_4.sql',
+    '14_5.sql', '14_6.sql', '14_7.sql', '14_8.sql', '14_9.sql',
+    '7_1.sql', '7_10.sql', '7_2.sql', '7_3.sql', '7_4.sql',
+    '7_5.sql', '7_6.sql', '7_7.sql', '7_8.sql', '7_9.sql',
+    '8_1.sql', '8_10.sql', '8_2.sql', '8_3.sql', '8_4.sql',
+    '8_5.sql', '8_6.sql', '8_7.sql', '8_8.sql', '8_9.sql'
+]
+
+# ===================================================================
 
 LR_SCHEDULES = {
     'C': {
@@ -264,7 +320,7 @@ class BalsaParams(object):
         # Training.
         p.Define('inherit_optimizer_state', False, 'Experimental.  For Adam.')
         p.Define('epochs', 100, 'Num epochs to train.')
-        p.Define('bs', 1024, 'Batch size.')
+        p.Define('bs', 32, 'Batch size.')
         p.Define('val_iters', 500, '# of value iterations.')
         p.Define('increment_iter_despite_timeouts', False,
                  'Increment the iteration counter even if timeouts occurred?')
@@ -479,6 +535,31 @@ class BalsaParams(object):
         p.Define('test_query_dir', None,
                  'If specified, use this directory for test queries.  '\
                  'Otherwise, use query_dir.')
+        p.Define('skip_neo_processed', False,
+                 'If true, skip the neo-processed queries.')
+        p.Define('skip_balsa_processed', False,
+                 'If true, skip the balsa-processed queries.')
+        p.Define('require_loger_dir', False,
+                 'If true, require a loger_dir to be included')
+        p.Define('workload_dir', None, 'If specified, use this directory for workload queries.')
+        p.Define('max_epochs', 100, 'Maximum number of epochs to run.')
+        p.Define('min_epochs_for_loss_stop', 10,
+                 'Minimum number of epochs to run before considering stopping'\
+                 ' early due to loss threshold.')
+        p.Define('loss_threshold', 0.01,
+                 'If the training loss is below this threshold and the'\
+                 ' min_epochs_for_loss_stop has been reached, stop training.')
+        p.Define('checkpoint_dir_base', 'checkpoints',
+                 'Base directory to save checkpoints.')
+        p.Define('checkpoint_epoch_interval', 10,
+                 'Save a checkpoint every N epochs.')
+        p.Define('checkpoint_query_interval', 250,
+                 'Save a checkpoint every N queries.')
+        p.Define('loss_improvement_threshold', 1e-4,
+                 'If the improvement of training loss is below this threshold'\
+                 ' for validate_early_stop_patience validations, stop training.')
+        p.Define('resume_checkpoint_path', None,
+                 'If specified, path to a checkpoint to resume training from.')
         return p
 
 
@@ -501,26 +582,6 @@ class BaselineExtJOB(Baseline):
         p = super().Params()
         p.query_glob = ['*.sql']
         p.query_dir = 'queries/join-order-benchmark-extended'
-        p.test_query_glob = ['e*.sql']
-        return p
-
-@balsa.params_registry.Register
-class BaselineTPCH(Baseline):
-
-    def Params(self):
-        p = super().Params()
-        p.query_glob = ['*.sql']
-        p.query_dir = 'queries/tpch'
-        p.test_query_glob = ['e*.sql']
-        return p
-
-@balsa.params_registry.Register
-class BaselineTPCDS(Baseline):
-
-    def Params(self):
-        p = super().Params()
-        p.query_glob = ['*.sql']
-        p.query_dir = 'queries/tpcds'
         p.test_query_glob = ['e*.sql']
         return p
 
@@ -603,27 +664,6 @@ class Balsa_JOBRandSplit(Rand52MinCardCostOnPolLrC):
         p.increment_iter_despite_timeouts = True
         p = p.Set(**LR_SCHEDULES['C10'])
         return p
-
-@balsa.params_registry.Register
-class Balsa_TPCH(BalsaParams):
-
-    def Params(self):
-        p = super().Params()
-        p.query_glob = ['*.sql']
-        p.query_dir = 'queries/tpch'
-        p.test_query_glob = ['e*.sql']
-        return p
-
-@balsa.params_registry.Register
-class Balsa_TPCDS(BalsaParams):
-
-    def Params(self):
-        p = super().Params()
-        p.query_glob = ['*.sql']
-        p.query_dir = 'queries/tpcds'
-        p.test_query_glob = ['e*.sql']
-        return p
-
 
 @balsa.params_registry.Register
 class Balsa_JOBRandSplitReplay(Balsa_JOBRandSplit):  # keep
@@ -875,6 +915,141 @@ class Balsa_STACKLeaveOneOutSplit1(Balsa_STACK_EvaluationBase):
         p.test_query_glob = STACK__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES
         return p
 
+########################## Generalizing to SSB ##########################
+
+@balsa.params_registry.Register
+class Balsa_SSB_EvaluationBase(Balsa_JOBSlowSplit):
+    def Params(self):
+        p = super().Params()
+        p.db = 'ssb'
+        p.query_dir = 'queries/ssb'
+        p.init_experience = 'data/initial_policy_data__ssb.pkl'
+        p.query_glob = ['*.sql']
+        p.sim_checkpoint = None
+        p.initial_timeout_ms = 3 * 60 * 1000
+        p.val_iters = 100
+        return p
+
+# ===========================================================================
+# SSB RANDOM SPLIT
+
+@balsa.params_registry.Register
+class Balsa_SSBRandomSplit1(Balsa_SSB_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = SSB__RANDOM_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# SSB BASE QUERY SPLIT
+
+@balsa.params_registry.Register
+class Balsa_SSBBaseQuerySplit1(Balsa_SSB_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = SSB__BASE_QUERY_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# SSB LEAVE ONE OUT SPLIT
+
+@balsa.params_registry.Register
+class Balsa_SSBLeaveOneOutSplit1(Balsa_SSB_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = SSB__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES
+        return p
+
+########################## Generalizing to TPC-DS ##########################
+
+@balsa.params_registry.Register
+class Balsa_TPCDS_EvaluationBase(Balsa_JOBSlowSplit):
+    def Params(self):
+        p = super().Params()
+        p.db = 'tpcds'
+        p.query_dir = 'queries/tpcds'
+        p.init_experience = 'data/initial_policy_data__tpcds.pkl'
+        p.query_glob = ['*.sql']
+        p.sim_checkpoint = None
+        p.initial_timeout_ms = 3 * 60 * 1000
+        p.val_iters = 100
+        return p
+
+# ===========================================================================
+# TPC-DS RANDOM SPLIT
+
+@balsa.params_registry.Register
+class Balsa_TPCDSRandomSplit1(Balsa_TPCDS_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCDS__RANDOM_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# TPC-DS BASE QUERY SPLIT
+
+@balsa.params_registry.Register
+class Balsa_TPCDSBaseQuerySplit1(Balsa_TPCDS_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCDS__BASE_QUERY_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# TPC-DS LEAVE ONE OUT SPLIT
+
+@balsa.params_registry.Register
+class Balsa_TPCDSLeaveOneOutSplit1(Balsa_TPCDS_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCDS__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES
+        return p
+
+########################## Generalizing to TPC-H ##########################
+
+@balsa.params_registry.Register
+class Balsa_TPCH_EvaluationBase(Balsa_JOBSlowSplit):
+    def Params(self):
+        p = super().Params()
+        p.db = 'tpch'
+        p.query_dir = 'queries/tpch'
+        p.init_experience = 'data/initial_policy_data__tpch.pkl'
+        p.query_glob = ['*.sql']
+        p.sim_checkpoint = None
+        p.initial_timeout_ms = 3 * 60 * 1000
+        p.val_iters = 100
+        return p
+
+# ===========================================================================
+# TPC-H RANDOM SPLIT
+
+@balsa.params_registry.Register
+class Balsa_TPCHRandomSplit1(Balsa_TPCH_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCH__RANDOM_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# TPC-H BASE QUERY SPLIT
+# NOTE: The variable name for this split in your previous request was incorrect. I've used the correct one here.
+@balsa.params_registry.Register
+class Balsa_TPCHBaseQuerySplit1(Balsa_TPCH_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCH__BASE_QUERY_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# TPC-H LEAVE ONE OUT SPLIT
+
+@balsa.params_registry.Register
+class Balsa_TPCHLeaveOneOutSplit1(Balsa_TPCH_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCH__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES
+        return p
+
 ########################## Generalizing to Ext-JOB ##########################
 
 
@@ -945,9 +1120,10 @@ class NeoImplRand52(BalsaParams):
     def Params(self):
         p = super().Params()
         p.query_glob = ['*.sql']
-        p.test_query_glob = RAND_52_TEST_QUERIES
+        p.test_query_glob = ['*.sql']
 
         p.test_every_n_iters = 1
+        p.gradient_clip_val = 1.0
 
         # Algorithmic choices below.
 
@@ -963,11 +1139,11 @@ class NeoImplRand52(BalsaParams):
         p.skip_training_on_expert = False
 
         # No timeouts.
-        p.use_timeout = False
+        p.use_timeout = True
         # NOTE: this flag is necessary because there could be some 'treating as
         # timeouts' feedback even when use_timeout is set to False.  In those
         # cases, skip training on those labels.
-        p.skip_training_on_timeouts = True
+        p.skip_training_on_timeouts = False
         p.use_cache = False  # Do not cache plans.
 
         return p
@@ -986,6 +1162,12 @@ class NeoImpl_JOBRandSplit(NeoImplRand52Reset):
     def Params(self):
         return super().Params().Set(dedup_training_data=False)
 
+@balsa.params_registry.Register  # keep
+class NeoImpl_TPCHRandSplit(NeoImplRand52Reset):
+
+    def Params(self):
+        return super().Params().Set(dedup_training_data=False)
+
 # ===========================================================================
 # Base Experiment Class
 
@@ -993,7 +1175,6 @@ class NeoImpl_JOBRandSplit(NeoImplRand52Reset):
 class Neo_JOB_EvaluationBase(NeoImplRand52):
     def Params(self):
         p = super().Params()
-        p.epochs = 50
         p.val_iters = 50
         return p
 
@@ -1079,7 +1260,7 @@ class Neo_JOBLeaveOneOutSplit3(Neo_JOB_EvaluationBase):
 class Neo_STACK_EvaluationBase(NeoImplRand52):
     def Params(self):
         p = super().Params()
-        p.db = 'so'
+        p.db = 'stack_2011'
         p.query_dir = 'queries/stack'
         p.query_glob = ['*.sql']
         p.sim_checkpoint = None
@@ -1122,6 +1303,157 @@ class Neo_STACK_LeaveOneOutSplit1(Neo_STACK_EvaluationBase):
         p.test_query_glob = STACK__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES
         return p
 
+########################## Neo - SSB ##########################
+# SSB Base Experiment Class
+
+@balsa.params_registry.Register
+class Neo_SSB_EvaluationBase(NeoImplRand52):
+    def Params(self):
+        p = super().Params()
+        p.db = 'ssb'
+        p.query_dir = 'queries/ssb'
+        p.query_glob = ['*.sql']
+        p.sim_checkpoint = None
+        p.init_experience = 'data/initial_policy_data__ssb.pkl'
+
+        # Need to set this to true, since Neo will not progress its training
+        # if there is no increment with any timeouts
+        p.increment_iter_despite_timeouts = True
+
+        p.val_iters = 50
+        return p
+
+# ===========================================================================
+# RANDOM SPLIT
+
+@balsa.params_registry.Register
+class Neo_SSB_RandomSplit1(Neo_SSB_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = SSB__RANDOM_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# BASE QUERY SPLIT
+
+@balsa.params_registry.Register
+class Neo_SSB_BaseQuerySplit1(Neo_SSB_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = SSB__BASE_QUERY_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# LEAVE ONE OUT SPLIT
+
+@balsa.params_registry.Register
+class Neo_SSB_LeaveOneOutSplit1(Neo_SSB_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = SSB__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES
+        return p
+
+########################## Neo - TPC-DS ##########################
+# TPC-DS Base Experiment Class
+
+@balsa.params_registry.Register
+class Neo_TPCDS_EvaluationBase(NeoImplRand52):
+    def Params(self):
+        p = super().Params()
+        p.db = 'tpcds'
+        p.query_dir = 'queries/tpcds'
+        p.query_glob = ['*.sql']
+        p.sim_checkpoint = None
+        p.init_experience = 'data/initial_policy_data__tpcds.pkl'
+
+        # Need to set this to true, since Neo will not progress its training
+        # if there is no increment with any timeouts
+        p.increment_iter_despite_timeouts = True
+        p.initial_timeout_ms = 3 * 60 * 1000
+
+        p.val_iters = 50
+        return p
+
+# ===========================================================================
+# RANDOM SPLIT
+
+@balsa.params_registry.Register
+class Neo_TPCDS_RandomSplit1(Neo_TPCDS_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCDS__RANDOM_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# BASE QUERY SPLIT
+
+@balsa.params_registry.Register
+class Neo_TPCDS_BaseQuerySplit1(Neo_TPCDS_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCDS__BASE_QUERY_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# LEAVE ONE OUT SPLIT
+
+@balsa.params_registry.Register
+class Neo_TPCDS_LeaveOneOutSplit1(Neo_TPCDS_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCDS__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES
+        return p
+
+########################## Neo - TPC-H ##########################
+# TPC-H Base Experiment Class
+
+@balsa.params_registry.Register
+class Neo_TPCH_EvaluationBase(NeoImplRand52):
+    def Params(self):
+        p = super().Params()
+        p.db = 'tpch'
+        p.query_dir = 'queries/tpch'
+        p.query_glob = ['*.sql']
+        p.sim_checkpoint = None
+        p.init_experience = 'data/initial_policy_data__tpch.pkl'
+
+        # Need to set this to true, since Neo will not progress its training
+        # if there is no increment with any timeouts
+        p.increment_iter_despite_timeouts = True
+        p.initial_timeout_ms = 3 * 60 * 1000
+
+        p.val_iters = 50
+        return p
+
+# ===========================================================================
+# RANDOM SPLIT
+
+@balsa.params_registry.Register
+class Neo_TPCH_RandomSplit1(Neo_TPCH_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCH__RANDOM_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# BASE QUERY SPLIT
+
+@balsa.params_registry.Register
+class Neo_TPCH_BaseQuerySplit1(Neo_TPCH_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCH__BASE_QUERY_SPLIT_1__TEST_QUERIES
+        return p
+    
+# ===========================================================================
+# LEAVE ONE OUT SPLIT
+
+@balsa.params_registry.Register
+class Neo_TPCH_LeaveOneOutSplit1(Neo_TPCH_EvaluationBase):
+    def Params(self):
+        p = super().Params()
+        p.test_query_glob = TPCH__LEAVE_ONE_OUT_SPLIT_1__TEST_QUERIES
+        return p
 
 ########################## Ablation: sim ##########################
 

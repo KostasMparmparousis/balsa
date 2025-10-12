@@ -196,6 +196,9 @@ class Experience(object):
             # ====================================
             #
             self.workload_info.WithJoinGraph(graphs.JOIN_ORDER_BENCHMARK_JOIN_GRAPH)
+            # self.workload_info.WithJoinGraph(graphs.TPC_H_JOIN_GRAPH)
+            # self.workload_info.WithJoinGraph(graphs.TPC_DS_JOIN_GRAPH)
+            # self.workload_info.WithJoinGraph(graphs.SSB_JOIN_GRAPH)
             # self.workload_info.WithJoinGraph(graphs.STACK_JOIN_GRAPH)
             
 

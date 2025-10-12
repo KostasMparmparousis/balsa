@@ -77,7 +77,8 @@ class TreeConvolution(nn.Module):
         for name, p in self.named_parameters():
             if p.dim() > 1:
                 # Weights/embeddings.
-                nn.init.normal_(p, std=0.02)
+                nn.init.kaiming_normal_(p, a=0.01, mode='fan_in', nonlinearity='leaky_relu')
+                # nn.init.normal_(p, std=0.02)
             elif 'bias' in name:
                 # Layer norm bias; linear bias, etc.
                 nn.init.zeros_(p)
@@ -99,7 +100,8 @@ class TreeConvolution(nn.Module):
         Returns:
           Predicted costs: Tensor of float, sized [batch size, 1].
         """
-        query_embs = self.query_mlp(query_feats.unsqueeze(1))
+        self.final_embedding = None
+        query_embs = self.query_mlp(query_feats.unsqueeze(1)) # Check out unsqu
 
         query_embs = query_embs.transpose(1, 2)
         max_subtrees = trees.shape[-1]
@@ -108,11 +110,8 @@ class TreeConvolution(nn.Module):
         concat = torch.cat((query_embs, trees), axis=1)
 
         out = self.conv((concat, indexes))
-        conv_out = self.conv((concat, indexes))
-        self.final_plan_embedding = conv_out.detach().cpu().numpy()
         out = self.out_mlp(out)
         return out
-
 
 class TreeConv1d(nn.Module):
     """Conv1d adapted to tree data."""
@@ -130,7 +129,8 @@ class TreeConv1d(nn.Module):
             torch.gather(data, 2,
                          indexes.expand(-1, -1, self._in_dims).transpose(1, 2)))
         zeros = torch.zeros((data.shape[0], self._out_dims),
-                            device=DEVICE).unsqueeze(2)
+                            dtype=data.dtype,
+                            device=data.device).unsqueeze(2)
         feats = torch.cat((zeros, feats), dim=2)
         return feats, indexes
 
@@ -140,7 +140,6 @@ class TreeMaxPool(nn.Module):
     def forward(self, trees):
         # trees: Tuple of (data, indexes)
         return trees[0].max(dim=2).values
-
 
 class TreeAct(nn.Module):
 
@@ -154,14 +153,21 @@ class TreeAct(nn.Module):
 
 
 class TreeStandardize(nn.Module):
-
     def forward(self, trees):
-        # trees: Tuple of (data, indexes)
-        mu = torch.mean(trees[0], dim=(1, 2)).unsqueeze(1).unsqueeze(1)
-        s = torch.std(trees[0], dim=(1, 2)).unsqueeze(1).unsqueeze(1)
-        standardized = (trees[0] - mu) / (s + 1e-5)
-        return standardized, trees[1]
-
+        data, indexes = trees
+        if torch.isnan(data).any():
+            print("  [TreeStandardize-DEBUG] !!! ERROR: Input `data` to TreeStandardize contains NaN!")        
+        mu = torch.mean(data, dim=(1, 2), keepdim=True)
+        if torch.isnan(mu).any():
+            print("  [TreeStandardize-DEBUG] !!! ERROR: Mean is NaN!")
+        variance = torch.var(data, dim=(1, 2), keepdim=True, unbiased=False)
+        var = torch.clamp(variance, min=1e-6)
+        if torch.isnan(var).any() or (var < 1e-6).any():
+            print(f"  [TreeStandardize-DEBUG] !!! WARNING: Variance is NaN or near zero. var = {var.flatten()[:5]}...")
+        standardized = (data - mu) / torch.sqrt(var + 1e-5)
+        if torch.isnan(standardized).any() and not torch.isnan(data).any():
+            print("  [TreeStandardize-DEBUG] !!! ERROR: NaN was CREATED during standardization!")
+        return standardized, indexes
 
 def ReportModel(model, blacklist=None):
     ps = []
@@ -173,7 +179,6 @@ def ReportModel(model, blacklist=None):
     print('number of model parameters: {} (~= {:.1f}MB)'.format(num_params, mb))
     print(model)
     return mb
-
 
 # @profile
 def _batch(data):
@@ -288,3 +293,93 @@ def make_and_featurize_trees(trees, node_featurizer):
         _batch([_featurize_tree(x, node_featurizer) for x in trees
                ])).transpose(1, 2)
     return trees, indexes
+
+# import matplotlib.pyplot as plt
+
+# def main():
+#     from torch.autograd import gradcheck
+#     global DEVICE
+#     DEVICE = torch.device("cpu")  # Run on CPU for safe gradcheck
+#     torch.manual_seed(42)
+
+#     # Feature dims from your featurizer
+#     query_dims = 68
+#     plan_dims = 128
+#     label_size = 1
+#     batch_size = 2
+    
+#     max_num_nodes = 8 
+#     feature_tensor_len = max_num_nodes + 1
+#     index_tensor_len = max_num_nodes * 3
+
+#     # Build model
+#     model = TreeConvolution(query_dims, plan_dims, label_size).to(DEVICE)
+#     ReportModel(model)
+#     opt = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
+#     criterion = nn.MSELoss()
+
+#     # Dummy batch creation
+#     # query_feats = torch.randn(batch_size, query_dims, device=DEVICE, requires_grad=True)
+#     # trees = torch.randn(batch_size, plan_dims, feature_tensor_len, device=DEVICE, requires_grad=True)
+#     # indexes = torch.randint(0, feature_tensor_len, (batch_size, index_tensor_len, 1), dtype=torch.long, device=DEVICE)
+
+#     def create_structured_batch(batch_size, query_dims, plan_dims, num_nodes):
+#         query_feats = torch.randn(batch_size, query_dims, device=DEVICE)
+#         trees = torch.randn(batch_size, plan_dims, num_nodes + 1, device=DEVICE)
+#         indexes = torch.randint(0, num_nodes + 1, (batch_size, num_nodes * 3, 1), 
+#                                 dtype=torch.long, device=DEVICE)
+        
+#         # Create a simple, learnable rule
+#         labels_raw = trees[:, 0, 1:].sum(dim=1).unsqueeze(1)
+        
+#         # --- START OF FIX ---
+#         # Normalize the labels
+#         label_mean = labels_raw.mean(dim=0, keepdim=True)
+#         label_std = labels_raw.std(dim=0, keepdim=True)
+#         labels = (labels_raw - label_mean) / (label_std + 1e-6) # Add epsilon for stability
+#         # --- END OF FIX ---
+        
+#         return query_feats, trees, indexes, labels
+
+#     epochs = 50
+#     loss_history = []    
+#     for epoch in range (epochs):
+#         opt.zero_grad()
+#         query_feats, trees, indexes, labels = create_structured_batch(
+#             batch_size, query_dims, plan_dims, max_num_nodes
+#         )
+#         output = model(query_feats, trees, indexes)
+#         loss = criterion(output, labels)
+#         loss.backward()
+#         opt.step()
+#         loss_history.append(loss.item())
+                
+#         if epoch % 10 == 0 or epoch == epochs - 1:
+#             print(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}")
+        
+#         # Gradient check every 10 epochs
+#         if epoch % 10 == 0:
+#             print("\n=== Gradient check per parameter ===")
+#             for name, p in model.named_parameters():
+#                 if p.grad is None:
+#                     print(f"No grad for {name}")
+#                 else:
+#                     print(f"{name}: grad mean={p.grad.abs().mean().item():.6f}, "
+#                           f"norm={p.grad.data.norm(2).item():.6f}")
+#             print("")
+
+#     # Plot after training
+#     plt.figure(figsize=(8,5))
+#     plt.plot(loss_history, label="Training Loss")
+#     plt.xlabel("Epoch")
+#     plt.ylabel("Loss")
+#     plt.title("Loss Curve")
+#     plt.legend()
+#     plt.grid(True)
+
+#     # Save as PNG
+#     plt.savefig("loss_curve.png", dpi=300, bbox_inches="tight")
+#     print("Loss curve saved as loss_curve.png")
+
+# if __name__ == "__main__":
+#     main()
