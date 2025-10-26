@@ -69,6 +69,19 @@ class Workload(object):
         p.Define('search_space_join_ops',
                  ['Hash Join', 'Merge Join', 'Nested Loop'],
                  'Join operators to learn.')
+
+        # p.Define('search_space_join_ops',
+        #          ['Nested Loop'],
+        #          'Action space: join operators to learn and use.')
+        
+        # p.Define('search_space_join_ops',
+        #          ['Hash Join'],
+        #          'Action space: join operators to learn and use.')
+
+        # p.Define('search_space_join_ops',
+        #          ['Merge Join'],
+        #          'Action space: join operators to learn and use.')
+        
         p.Define('search_space_scan_ops',
                  ['Index Scan', 'Index Only Scan', 'Seq Scan', 'Bitmap Heap Scan', 'Tid Scan'],
                  'Scan operators to learn.')

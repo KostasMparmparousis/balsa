@@ -19,3 +19,5 @@ data/initial_policy_data.pkl
 *.log
 
 logs/**/*.pdf
+
+tensorboard_logs/**

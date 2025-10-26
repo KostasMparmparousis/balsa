@@ -25,37 +25,68 @@ from psycopg2.extensions import POLL_OK, POLL_READ, POLL_WRITE
 import ray
 import sqlalchemy
 
+import os
+from dotenv import load_dotenv
+
+def load_repo_env():
+    """
+    Find and load the .env file located in the Learned-Optimizers-Benchmarking-Suite repo root,
+    regardless of where this script is executed from.
+    """
+    current_dir = os.path.abspath(os.path.dirname(__file__))
+
+    while True:
+        # Check if we’ve reached the filesystem root
+        parent_dir = os.path.dirname(current_dir)
+        if current_dir == parent_dir:
+            raise FileNotFoundError("Could not find .env file in any parent directory.")
+        
+        env_path = os.path.join(current_dir, ".env")
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            print(f"✅ Loaded environment variables from: {env_path}")
+            break
+
+        current_dir = parent_dir  # go up one directory
+
+# Load environment variables from the repo root
+load_repo_env()
+
+DB_USER = os.getenv("DB_USER")
+DB_PASS = os.getenv("DB_PASS")
+DB_HOST = os.getenv("DB_HOST")
+IMDB_PORT = os.getenv("IMDB_PORT", "5432")
+
 # Change these strings so that psycopg2.connect(dsn=dsn_val) works correctly
 # for local & remote Postgres.
 
 # JOB/IMDB.
-# LOCAL_DSN = "postgres://psycopg:psycopg@localhost/imdb"
-LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/imdbload"
-REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5468/imdbload"
+LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{IMDB_PORT}/imdbload"
+REMOTE_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{IMDB_PORT}/imdbload"
 
-# TPC-H.
-# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/tpch"
-# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/tpch"
+# TPC-H
+# LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{TPCH_PORT}/tpch"
+# REMOTE_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{TPCH_PORT}/tpch"
 
 # TPC-DS
-# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/tpcds"
-# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/tpcds"
+# LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{TPCDS_PORT}/tpcds"
+# REMOTE_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{TPCDS_PORT}/tpcds"
 
 # SSB
-# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/ssb"
-# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/ssb"
+# LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{SSB_PORT}/ssb"
+# REMOTE_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{SSB_PORT}/ssb"
 
 # STACK 2011
-# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2011"
-# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2011"
+# LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{STACK_PORT}/stack_2011"
+# REMOTE_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{STACK_PORT}/stack_2011"
 
 # STACK 2015
-# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2015"
-# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2015"
+# LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{STACK_PORT}/stack_2015"
+# REMOTE_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{STACK_PORT}/stack_2015"
 
 # STACK 2019
-# LOCAL_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2019"
-# REMOTE_DSN = "postgresql://suite_user:71Vgfi4mUNPm@train.darelab.athenarc.gr:5469/stack_2019"
+# LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{STACK_PORT}/stack_2019"
+# REMOTE_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{STACK_PORT}/stack_2019"
 
 local_engine = sqlalchemy.create_engine(
     LOCAL_DSN,

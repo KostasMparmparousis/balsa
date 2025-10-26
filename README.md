@@ -31,7 +31,32 @@ Your environment is now ready.
 
 ---
 
-### 2. Running NEO / Balsa
+### 2. Database Connection
+
+**Important**: Before running any script, you must edit two files to select the target database:
+
+1.  **Set Database Connection:** In `pg_executor/pg_executor/pg_executor.py`, uncomment the `DSN` line for your target database (e.g., `imdbload` for JOB).
+
+    ```python
+    # In pg_executor/pg_executor/pg_executor.py (around line 64)
+    LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{IMDB_PORT}/imdbload"
+    # LOCAL_DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{TPCH_PORT}/tpch"
+    ```
+
+2.  **Set Join Graph:** In `balsa/experience.py`, uncomment the `WithJoinGraph` line that matches your workload.
+
+    ```python
+    # In balsa/experience.py (around line 198)
+    self.workload_info.WithJoinGraph(graphs.JOIN_ORDER_BENCHMARK_JOIN_GRAPH)
+    # self.workload_info.WithJoinGraph(graphs.TPC_H_JOIN_GRAPH)
+    ```
+
+3. Re-install the local pg_executor module, if any changes were applied
+```bash
+pip install -e pg_executor
+```
+
+### 3. Running NEO / Balsa
 
 Experiments are defined as classes in `experiments.py` and are launched using `run.py` for training and `test_model.py` for evaluation.
 
