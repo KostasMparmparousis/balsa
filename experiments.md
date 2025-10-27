@@ -2,9 +2,12 @@
 
 This document provides the specific commands required to replicate the experiments presented in our paper using the NEO/Balsa optimizer.
 
-### Pre-Run: Database Connection
+### Configure Database Connection
+The scripts use a `.env` file in the repository root to manage database credentials. Before running any command, create a file named `.env` in the top-level directory of this project and populate it with your connection details. You can use the provided `.env.example` as a template.
 
-**Important**: Before running any script, you must edit two files to select the target database:
+### Pre-Run: Completing the DB Connection
+
+**Important**: Before running any script, in order to finalize connecting to the database, you must edit two files to select the target database:
 
 1.  **Set Database Connection:** In `pg_executor/pg_executor/pg_executor.py`, uncomment the `DSN` line for your target database (e.g., `imdbload` for JOB).
 2.  **Set Join Graph:** In `balsa/experience.py`, uncomment the `WithJoinGraph` line that matches your workload.
